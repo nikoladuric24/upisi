@@ -1,0 +1,6 @@
+{
+  "name": "EduPortal Hrvatska",
+  "description": "Jedinstveni nacionalni portal za upise u srednje škole i visoka učilišta u Republici Hrvatskoj.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
