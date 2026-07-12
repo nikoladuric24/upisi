@@ -14,6 +14,7 @@ import {
   University,
   Faculty,
   StudyProgram,
+  SchoolProgram,
   UniversityApplicationChoice,
   UniversityApplication
 } from '../types';
@@ -26,6 +27,7 @@ import {
 } from '../lib/storage';
 import { WorkflowService } from '../lib/workflow';
 import { useRbac } from '../components/RbacContext';
+import { InstitutionProgramsView } from '../components/InstitutionProgramsView';
 import {
   BookOpen,
   Calendar,
@@ -65,6 +67,7 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
   const [universities, setUniversities] = useState<University[]>(() => getTable<University>('universities'));
   const [faculties, setFaculties] = useState<Faculty[]>(() => getTable<Faculty>('faculties'));
   const [studyPrograms, setStudyPrograms] = useState<StudyProgram[]>(() => getTable<StudyProgram>('study_programs'));
+  const [schoolPrograms, setSchoolPrograms] = useState<SchoolProgram[]>(() => getTable<SchoolProgram>('school_programs'));
   
   const [univApps, setUnivApps] = useState<UniversityApplication[]>(() => getTable<UniversityApplication>('university_applications'));
   const [univChoices, setUnivChoices] = useState<UniversityApplicationChoice[]>(() => getTable<UniversityApplicationChoice>('university_application_choices'));
@@ -77,26 +80,51 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
   const isStudent = session?.roles.includes('SECONDARY_STUDENT') || currentUser.role === 'SECONDARY_STUDENT';
   const isTeacherOrAdmin = session?.roles.includes('SECONDARY_HOMEROOM_TEACHER') || session?.roles.includes('SECONDARY_ADMIN') || currentUser.role === 'SECONDARY_HOMEROOM_TEACHER' || currentUser.role === 'SECONDARY_ADMIN';
 
-  const [activeTab, setActiveTab] = useState<string>(isStudent ? 'matura' : 'nastavnik');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabFromUrl = params.get('tab');
+    if (tabFromUrl) return tabFromUrl;
+    return isStudent ? 'matura' : 'nastavnik';
+  });
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  React.useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabFromUrl = params.get('tab');
+      if (tabFromUrl) {
+        setActiveTab(tabFromUrl);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   React.useEffect(() => {
     if (activeTabOverride) {
-      setActiveTab(activeTabOverride);
+      handleTabChange(activeTabOverride);
     }
   }, [activeTabOverride]);
 
   // Dynamic tab switcher to prevent showing unauthorized tab
   React.useEffect(() => {
-    const allowedTabs = [];
+    const allowedTabs: string[] = [];
     if (hasPermission('exams.read')) allowedTabs.push('matura');
     if (hasPermission('schools.read')) allowedTabs.push('fakulteti');
-    if (hasPermission('applications.update')) allowedTabs.push('izbori');
+    if (hasPermission('applications.update')) allowedTabs.push('prioriteti');
     if (hasPermission('students.read')) allowedTabs.push('nastavnik');
+    if (hasPermission('school_programs.read', { schoolId: session?.school_id })) allowedTabs.push('programi');
 
     if (!allowedTabs.includes(activeTab) && allowedTabs.length > 0) {
-      setActiveTab(allowedTabs[0]);
+      handleTabChange(allowedTabs[0]);
     }
-  }, [session, activeTab]);
+  }, [session, activeTab, hasPermission]);
 
   // Matura registration states
   const [selectedSubjectId, setSelectedSubjectId] = useState('');
@@ -335,7 +363,8 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
       <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
         {hasPermission('exams.read') && (
           <button
-            onClick={() => setActiveTab('matura')}
+            type="button"
+            onClick={() => handleTabChange('matura')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'matura' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             Državna matura & ispiti
@@ -343,7 +372,8 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
         )}
         {hasPermission('schools.read') && (
           <button
-            onClick={() => setActiveTab('fakulteti')}
+            type="button"
+            onClick={() => handleTabChange('fakulteti')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'fakulteti' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <GraduationCap className="h-4 w-4" /> Prijava studijskih programa
@@ -351,7 +381,8 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
         )}
         {hasPermission('applications.update') && (
           <button
-            onClick={() => setActiveTab('prioriteti')}
+            type="button"
+            onClick={() => handleTabChange('prioriteti')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'prioriteti' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <Layers className="h-4 w-4" /> Moja lista prioriteta ({studentChoices.length})
@@ -359,10 +390,20 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
         )}
         {hasPermission('students.read') && (
           <button
-            onClick={() => setActiveTab('nastavnik')}
+            type="button"
+            onClick={() => handleTabChange('nastavnik')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'nastavnik' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             Pregled razreda i rezultata mature
+          </button>
+        )}
+        {hasPermission('school_programs.read', { schoolId: session?.school_id }) && (
+          <button
+            type="button"
+            onClick={() => handleTabChange('programi')}
+            className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'programi' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
+          >
+            Programi
           </button>
         )}
       </div>
@@ -614,7 +655,8 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
             {studentChoices.length === 0 ? (
               <div className="text-center py-12 space-y-2">
                 <p className="text-slate-400 text-sm">Nemate niti jedan prijavljeni studijski program.</p>
-                <button onClick={() => setActiveTab('fakulteti')} className="text-indigo-600 hover:underline text-xs font-bold">
+                <button type="button"
+            onClick={() => handleTabChange('fakulteti')} className="text-indigo-600 hover:underline text-xs font-bold">
                   Pretraži visokoškolske studije i prijavi se
                 </button>
               </div>
@@ -756,6 +798,32 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* PROGRAMI TAB (Secondary Admin) */}
+        {activeTab === 'programi' && session?.school_id && (
+          <div className="space-y-6">
+            <div className="p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+              <InstitutionProgramsView
+                institutionId={session.school_id}
+                institutionType="SECONDARY"
+                programs={schoolPrograms.filter(p => p.schoolId === session.school_id)}
+                onSave={(p) => {
+                  const updated = [...schoolPrograms.filter(pr => pr.id !== p.id), p];
+                  setSchoolPrograms(updated);
+                  saveTable('school_programs', updated);
+                  logAuditEvent(currentUser.id, currentUser.email, 'AZURIRANJE_PROGRAMA', `Ažuriran program ${p.name}`);
+                }}
+                onDelete={(id) => {
+                  const updated = schoolPrograms.filter(p => p.id !== id);
+                  setSchoolPrograms(updated);
+                  saveTable('school_programs', updated);
+                  logAuditEvent(currentUser.id, currentUser.email, 'BRISANJE_PROGRAMA', `Obrisan program ID: ${id}`);
+                }}
+                onBack={() => handleTabChange('nastavnik')}
+              />
             </div>
           </div>
         )}

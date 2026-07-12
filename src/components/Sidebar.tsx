@@ -250,7 +250,7 @@ export function Sidebar({
             Navigacijski panel
           </span>
         )}
-        <button
+        <button type="button"
           onClick={() => setIsCollapsed(!isCollapsed)}
           className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 rounded-lg ml-auto transition-all cursor-pointer"
           aria-label={isCollapsed ? 'Proširi izbornik' : 'Sakrij izbornik'}
@@ -303,7 +303,7 @@ export function Sidebar({
                     (!isPortalPage || window.location.hash.includes(item.portalTab)); // hash/tab sync if needed
 
                   return (
-                    <button
+                    <button type="button"
                       key={item.id}
                       onClick={() => onPageChange(targetPageId, item.portalTab)}
                       className={`w-full text-left px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-2.5 transition-all cursor-pointer relative ${

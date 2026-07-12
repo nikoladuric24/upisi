@@ -27,6 +27,7 @@ import {
 import { runAutomaticWorkflowTick } from '../lib/workflow';
 import { DatabaseExplorer } from '../components/DatabaseExplorer';
 import { InstitutionProgramsView } from '../components/InstitutionProgramsView';
+import { FacultyProgramsView } from '../components/FacultyProgramsView';
 import {
   Shield,
   School as SchoolIcon,
@@ -62,11 +63,37 @@ interface SuperAdminPortalProps {
 
 export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminPortalProps) {
   const { hasPermission, logRbacAction } = useRbac();
-  const [activeTab, setActiveTab] = useState<'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza'>('stats');
+  const [activeTab, setActiveTab] = useState<'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabFromUrl = params.get('tab');
+    if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza'].includes(tabFromUrl)) {
+      return tabFromUrl as any;
+    }
+    return 'stats';
+  });
   
+  const handleTabChange = (tab: 'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza') => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabFromUrl = params.get('tab');
+      if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza'].includes(tabFromUrl)) {
+        setActiveTab(tabFromUrl as any);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
+
   useEffect(() => {
     if (activeTabOverride) {
-      setActiveTab(activeTabOverride as any);
+      handleTabChange(activeTabOverride as any);
     }
   }, [activeTabOverride]);
   
@@ -94,6 +121,7 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
   // Search/Filter states
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedInstitutionForPrograms, setSelectedInstitutionForPrograms] = useState<School | null>(null);
+  const [selectedFacultyForPrograms, setSelectedFacultyForPrograms] = useState<Faculty | null>(null);
   const [filterType, setFilterType] = useState<'ALL' | 'PRIMARY' | 'SECONDARY'>('ALL');
   
   // Edit modals state (inline or simplified forms)
@@ -414,7 +442,7 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
           return (
             <button
               key={tab.id}
-              onClick={() => { setActiveTab(tab.id as any); setSearchQuery(''); }}
+              onClick={() => { handleTabChange(tab.id as any); setSearchQuery(''); }}
               className={`flex items-center gap-2 px-4 py-2.5 rounded-2xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                 activeTab === tab.id
                   ? 'bg-indigo-600 text-white shadow-md'
@@ -672,6 +700,7 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
             {selectedInstitutionForPrograms ? (
               <InstitutionProgramsView 
                 institutionId={selectedInstitutionForPrograms.id}
+                institutionType={selectedInstitutionForPrograms.type}
                 programs={schoolPrograms.filter(p => p.schoolId === selectedInstitutionForPrograms.id)}
                 onSave={(p) => {
                   const updated = [...schoolPrograms.filter(pr => pr.id !== p.id), p];
@@ -881,39 +910,67 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
             </p>
 
             <div className="space-y-4">
-              {universities.map(uni => {
-                const uniFacs = faculties.filter(f => f.universityId === uni.id);
-                return (
-                  <div key={uni.id} className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
-                    <h4 className="font-extrabold text-sm text-indigo-600 dark:text-indigo-400">{uni.name}</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      {uniFacs.map(fac => {
-                        const progs = studyPrograms.filter(p => p.facultyId === fac.id);
-                        return (
-                          <div key={fac.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-2">
-                            <span className="font-bold text-xs text-slate-700 dark:text-slate-200">{fac.name}</span>
-                            <div className="space-y-2 pt-1 border-t border-slate-50 dark:border-slate-800/50">
-                              {progs.map(p => (
-                                <div key={p.id} className="flex justify-between items-center text-xs">
-                                  <span className="text-slate-600 dark:text-slate-400">{p.name}</span>
-                                  <div className="flex gap-2 items-center">
-                                    <span className="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] px-1.5 py-0.5 rounded-sm">
-                                      Kvota: {p.quota}
-                                    </span>
-                                    <span className="bg-blue-100 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 text-[10px] px-1.5 py-0.5 rounded-sm">
-                                      Prag: {p.minPointsThreshold}b
-                                    </span>
+              {selectedFacultyForPrograms ? (
+                <FacultyProgramsView 
+                  facultyId={selectedFacultyForPrograms.id}
+                  programs={studyPrograms.filter(p => p.facultyId === selectedFacultyForPrograms.id)}
+                  onSave={(p) => {
+                    const updated = [...studyPrograms.filter(pr => pr.id !== p.id), p];
+                    setStudyPrograms(updated);
+                    saveTable('study_programs', updated);
+                    logAuditEvent(currentUser.id, currentUser.email, 'AZURIRANJE_STUDIJA', `Ažuriran studij ${p.name}`);
+                  }}
+                  onDelete={(id) => {
+                    const updated = studyPrograms.filter(p => p.id !== id);
+                    setStudyPrograms(updated);
+                    saveTable('study_programs', updated);
+                    logAuditEvent(currentUser.id, currentUser.email, 'BRISANJE_STUDIJA', `Obrisan studij ID: ${id}`);
+                  }}
+                  onBack={() => setSelectedFacultyForPrograms(null)}
+                />
+              ) : (
+                universities.map(uni => {
+                  const uniFacs = faculties.filter(f => f.universityId === uni.id);
+                  return (
+                    <div key={uni.id} className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-3">
+                      <h4 className="font-extrabold text-sm text-indigo-600 dark:text-indigo-400">{uni.name}</h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        {uniFacs.map(fac => {
+                          const progs = studyPrograms.filter(p => p.facultyId === fac.id);
+                          return (
+                            <div key={fac.id} className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-100 dark:border-slate-800 space-y-2">
+                              <div className="flex justify-between items-center">
+                                <span className="font-bold text-xs text-slate-700 dark:text-slate-200">{fac.name}</span>
+                                <button 
+                                  onClick={() => setSelectedFacultyForPrograms(fac)}
+                                  className="px-2 py-1 bg-indigo-50 dark:bg-indigo-950/30 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold rounded-lg"
+                                >
+                                  Programi
+                                </button>
+                              </div>
+                              <div className="space-y-2 pt-1 border-t border-slate-50 dark:border-slate-800/50">
+                                {progs.map(p => (
+                                  <div key={p.id} className="flex justify-between items-center text-xs">
+                                    <span className="text-slate-600 dark:text-slate-400">{p.name}</span>
+                                    <div className="flex gap-2 items-center">
+                                      <span className="bg-emerald-100 dark:bg-emerald-950/40 text-emerald-800 dark:text-emerald-300 text-[10px] px-1.5 py-0.5 rounded-sm">
+                                        Kvota: {p.quota}
+                                      </span>
+                                      <span className="bg-blue-100 dark:bg-blue-950/40 text-blue-800 dark:text-blue-300 text-[10px] px-1.5 py-0.5 rounded-sm">
+                                        Prag: {p.minPointsThreshold}b
+                                      </span>
+                                    </div>
                                   </div>
-                                </div>
-                              ))}
+                                ))}
+                              </div>
                             </div>
-                          </div>
-                        );
-                      })}
+                          );
+                        })}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
         )}

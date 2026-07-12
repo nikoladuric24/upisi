@@ -1,34 +1,27 @@
 import React, { useState } from 'react';
-import { SchoolProgram } from '../types';
+import { StudyProgram } from '../types';
 import { Plus, Edit2, Trash2, Save } from 'lucide-react';
 import { useRbac } from './RbacContext';
 
 interface Props {
-  institutionId: string;
-  institutionType: 'PRIMARY' | 'SECONDARY' | 'UNIVERSITY' | 'FACULTY';
-  programs: SchoolProgram[];
-  onSave: (program: SchoolProgram) => void;
+  facultyId: string;
+  programs: StudyProgram[];
+  onSave: (program: StudyProgram) => void;
   onDelete: (id: string) => void;
-  onBack: () => void;
+  onBack?: () => void;
 }
 
-export function InstitutionProgramsView({ institutionId, institutionType, programs, onSave, onDelete, onBack }: Props) {
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [newProgram, setNewProgram] = useState<Partial<SchoolProgram>>({ schoolId: institutionId, name: '', durationYears: 4, quota: 0, minPointsThreshold: 0, subjectsRequired: [] });
+export function FacultyProgramsView({ facultyId, programs, onSave, onDelete, onBack }: Props) {
+  const [newProgram, setNewProgram] = useState<Partial<StudyProgram>>({ facultyId, name: '', quota: 0, minPointsThreshold: 0, requiresMaturaMandatory: [] });
   const { hasPermission } = useRbac();
 
-  // SECONDARY_SCHOOL -> school_programs
-  // UNIVERSITY/FACULTY -> study_programs
-  const createPermission = institutionType === 'SECONDARY' ? 'school_programs.create' : 'study_programs.create';
-  const updatePermission = institutionType === 'SECONDARY' ? 'school_programs.update' : 'study_programs.update';
-
-  const canCreate = hasPermission(createPermission as any, { schoolId: institutionType === 'SECONDARY' ? institutionId : undefined, facultyId: institutionType !== 'SECONDARY' ? institutionId : undefined });
-  const canUpdate = hasPermission(updatePermission as any, { schoolId: institutionType === 'SECONDARY' ? institutionId : undefined, facultyId: institutionType !== 'SECONDARY' ? institutionId : undefined });
+  const canCreate = hasPermission('study_programs.create', { facultyId });
+  const canUpdate = hasPermission('study_programs.update', { facultyId });
 
   return (
     <div className="space-y-4">
-      <button onClick={onBack} className="text-xs text-indigo-600 hover:underline">← Nazad na popis ustanova</button>
-      <h3 className="text-lg font-bold">Upravljanje programima</h3>
+      {onBack && <button onClick={onBack} className="text-xs text-indigo-600 hover:underline">← Nazad</button>}
+      <h3 className="text-lg font-bold">Upravljanje studijskim programima</h3>
       
       <div className="overflow-x-auto border border-slate-100 rounded-2xl">
         <table className="w-full text-xs">
@@ -59,12 +52,12 @@ export function InstitutionProgramsView({ institutionId, institutionType, progra
 
       {canCreate && (
         <div className="p-4 bg-slate-50 rounded-2xl space-y-3">
-            <h4 className="font-bold text-sm">Dodaj novi program</h4>
+            <h4 className="font-bold text-sm">Dodaj novi studijski program</h4>
             <div className="grid grid-cols-2 gap-2">
                 <input placeholder="Naziv programa" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, name: e.target.value})} />
                 <input placeholder="Kvota" type="number" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, quota: parseInt(e.target.value)})} />
                 <input placeholder="Bodovni prag" type="number" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, minPointsThreshold: parseInt(e.target.value)})} />
-                <button className="bg-indigo-600 text-white rounded-xl text-xs font-bold" onClick={() => onSave({ ...newProgram, id: `prog-${Date.now()}` } as SchoolProgram)}>Spremi</button>
+                <button className="bg-indigo-600 text-white rounded-xl text-xs font-bold" onClick={() => onSave({ ...newProgram, id: `stud-${Date.now()}` } as StudyProgram)}>Spremi</button>
             </div>
         </div>
       )}

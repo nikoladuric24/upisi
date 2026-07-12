@@ -50,11 +50,37 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
   const [students, setStudents] = useState<Student[]>(() => getTable<Student>('students'));
   const [users, setUsers] = useState<User[]>(() => getTable<User>('users'));
 
-  const [activeTab, setActiveTab] = useState<'programs' | 'applicants' | 'statistics'>('programs');
+  const [activeTab, setActiveTab] = useState<'programs' | 'applicants' | 'statistics'>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabFromUrl = params.get('tab');
+    if (tabFromUrl === 'programs' || tabFromUrl === 'applicants' || tabFromUrl === 'statistics') {
+      return tabFromUrl as any;
+    }
+    return 'programs';
+  });
+
+  const handleTabChange = (tab: 'programs' | 'applicants' | 'statistics') => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabFromUrl = params.get('tab');
+      if (tabFromUrl === 'programs' || tabFromUrl === 'applicants' || tabFromUrl === 'statistics') {
+        setActiveTab(tabFromUrl as any);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   useEffect(() => {
     if (activeTabOverride) {
-      setActiveTab(activeTabOverride as any);
+      handleTabChange(activeTabOverride as any);
     }
   }, [activeTabOverride]);
 
@@ -67,7 +93,7 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
   
   // RLS-filtered study programs for current faculty
   const myPrograms = studyPrograms.filter(p => {
-    return p.facultyId === myFaculty.id && hasPermission('schools.read', {
+    return p.facultyId === myFaculty.id && hasPermission('universities.read', {
       facultyId: p.facultyId
     });
   });
@@ -139,7 +165,7 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
   const ferApplicants = univChoices.filter(choice => ferProgramIds.includes(choice.studyProgramId));
 
   return (
-    <PermissionGuard permission="schools.read" isPage={true}>
+    <PermissionGuard permission="universities.read" isPage={true}>
       <div className="space-y-6">
       
       {/* Top Banner */}
@@ -164,9 +190,10 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
 
       {/* Tabs Row */}
       <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
-        {hasPermission('schools.read') && (
+        {hasPermission('universities.read') && (
           <button
-            onClick={() => setActiveTab('programs')}
+            type="button"
+            onClick={() => handleTabChange('programs')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'programs' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             Studijski programi i kvote
@@ -174,15 +201,17 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
         )}
         {hasPermission('students.read') && (
           <button
-            onClick={() => setActiveTab('applicants')}
+            type="button"
+            onClick={() => handleTabChange('applicants')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'applicants' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <Users className="h-4 w-4" /> Kandidati i rang liste
           </button>
         )}
-        {hasPermission('schools.read') && (
+        {hasPermission('universities.read') && (
           <button
-            onClick={() => setActiveTab('statistics')}
+            type="button"
+            onClick={() => handleTabChange('statistics')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'statistics' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <TrendingUp className="h-4 w-4" /> Analitika & Kvote
@@ -202,12 +231,14 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
                 <p className="text-[10px] text-slate-400 mt-1">Definirajte slobodne upisne kvote, pragove bodova i težinske koeficijente državne mature.</p>
               </div>
 
-              <button
-                onClick={() => setShowAddProgram(!showAddProgram)}
-                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
-              >
-                <Plus className="h-4 w-4" /> Novi studij
-              </button>
+              {hasPermission('study_programs.create', { facultyId: myFaculty.id }) && (
+                <button
+                  onClick={() => setShowAddProgram(!showAddProgram)}
+                  className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1 cursor-pointer"
+                >
+                  <Plus className="h-4 w-4" /> Dodaj studijski program
+                </button>
+              )}
             </div>
 
             {showAddProgram && (
@@ -304,22 +335,26 @@ export function UniversityAdminPortal({ currentUser, activeTabOverride }: Univer
                         </>
                       ) : (
                         <>
-                          <button
-                            onClick={() => {
-                              setEditingProgramId(prog.id);
-                              setEditQuota(prog.quota);
-                              setEditMinThreshold(prog.minPointsThreshold);
-                            }}
-                            className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
-                          >
-                            Uredi kvote
-                          </button>
-                          <button
-                            onClick={() => handleDeleteProgram(prog.id)}
-                            className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl cursor-pointer"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
+                          {hasPermission('study_programs.update', { facultyId: myFaculty.id }) && (
+                            <button
+                              onClick={() => {
+                                setEditingProgramId(prog.id);
+                                setEditQuota(prog.quota);
+                                setEditMinThreshold(prog.minPointsThreshold);
+                              }}
+                              className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-bold rounded-xl cursor-pointer"
+                            >
+                              Uredi kvote
+                            </button>
+                          )}
+                          {hasPermission('study_programs.update', { facultyId: myFaculty.id }) && (
+                            <button
+                              onClick={() => handleDeleteProgram(prog.id)}
+                              className="p-1.5 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 rounded-xl cursor-pointer"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </>
                       )}
                     </div>

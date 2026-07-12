@@ -9,6 +9,11 @@ export type Permission =
   | 'schools.read'
   | 'schools.update'
   | 'schools.delete'
+  | 'school_programs.read'
+  | 'school_programs.create'
+  | 'school_programs.update'
+  | 'school_programs.deactivate'
+  | 'school_programs.manage_quotas'
   | 'students.read'
   | 'students.create'
   | 'students.update'
@@ -30,7 +35,11 @@ export type Permission =
   | 'universities.read'
   | 'universities.update'
   | 'study_programs.read'
+  | 'study_programs.create'
   | 'study_programs.update'
+  | 'study_programs.deactivate'
+  | 'study_programs.manage_quotas'
+  | 'study_programs.manage_requirements'
   | 'thresholds.update'
   | 'quotas.update'
   | 'deadlines.update'
@@ -56,6 +65,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   SUPER_ADMIN: [
     'users.read', 'users.create', 'users.update', 'users.delete',
     'schools.read', 'schools.update', 'schools.delete',
+    'school_programs.read', 'school_programs.create', 'school_programs.update', 'school_programs.deactivate', 'school_programs.manage_quotas',
     'students.read', 'students.create', 'students.update',
     'teachers.read', 'teachers.update',
     'classes.read', 'classes.update',
@@ -64,7 +74,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     'documents.read', 'documents.approve', 'documents.delete',
     'matura.read', 'matura.register', 'matura.unregister', 'matura.results',
     'universities.read', 'universities.update',
-    'study_programs.read', 'study_programs.update',
+    'study_programs.read', 'study_programs.create', 'study_programs.update', 'study_programs.deactivate', 'study_programs.manage_quotas', 'study_programs.manage_requirements',
     'thresholds.update', 'quotas.update', 'deadlines.update',
     'notifications.create', 'reports.export', 'audit.read', 'settings.update'
   ],
@@ -79,6 +89,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   SECONDARY_ADMIN: [
     'schools.read', 'schools.update',
+    'school_programs.read', 'school_programs.create', 'school_programs.update', 'school_programs.deactivate', 'school_programs.manage_quotas',
     'study_programs.read', 'study_programs.update',
     'quotas.update', 'thresholds.update',
     'applications.read', 'applications.update',
@@ -89,7 +100,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   UNIVERSITY_ADMIN: [
     'universities.read', 'universities.update',
-    'study_programs.read', 'study_programs.update',
+    'study_programs.read', 'study_programs.create', 'study_programs.update', 'study_programs.deactivate', 'study_programs.manage_quotas', 'study_programs.manage_requirements',
     'quotas.update',
     'applications.read', 'applications.update',
     'reports.export'

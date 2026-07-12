@@ -879,3 +879,89 @@ CREATE POLICY school_admin_view_students ON students
   USING (school_id IN (
     SELECT institution_id FROM teachers WHERE user_id = auth.uid() -- podrazumijeva da admini imaju zapis u teachers
   ));
+
+-- =============================================================================
+-- RLS ZA OBRAZOVNE I STUDIJSKE PROGRAME (school_programs, study_programs)
+-- =============================================================================
+
+ALTER TABLE school_programs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE study_programs ENABLE ROW LEVEL SECURITY;
+
+-- Funkcija za provjeru je li korisnik SUPER_ADMIN
+CREATE OR REPLACE FUNCTION is_super_admin() RETURNS BOOLEAN AS $$
+BEGIN
+  RETURN EXISTS (
+    SELECT 1 FROM user_roles ur 
+    JOIN roles r ON ur.role_id = r.id 
+    WHERE ur.user_id = auth.uid() AND r.name = 'SUPER_ADMIN'
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- Funkcija za provjeru ustanove SECONDARY_ADMIN-a
+CREATE OR REPLACE FUNCTION get_user_school_id() RETURNS UUID AS $$
+DECLARE
+  v_school_id UUID;
+BEGIN
+  -- Pokušaj dohvatiti iz tablice administracije ili nastavnika (ovisi o strukturi baze)
+  -- Ako postoji specifična tablica za admine, prilagodi upit.
+  SELECT institution_id INTO v_school_id FROM teachers WHERE user_id = auth.uid() LIMIT 1;
+  RETURN v_school_id;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+-- 1. SUPER_ADMIN ima pristup svim zapisima
+CREATE POLICY super_admin_school_programs ON school_programs FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+CREATE POLICY super_admin_study_programs ON study_programs FOR ALL TO authenticated USING (is_super_admin()) WITH CHECK (is_super_admin());
+
+-- 2. SECONDARY_ADMIN može INSERT, SELECT i UPDATE samo gdje institution_id odgovara njegovoj školi
+CREATE POLICY sec_admin_school_programs_select ON school_programs FOR SELECT TO authenticated
+USING (
+  school_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'SECONDARY_ADMIN')
+);
+
+CREATE POLICY sec_admin_school_programs_insert ON school_programs FOR INSERT TO authenticated
+WITH CHECK (
+  school_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'SECONDARY_ADMIN')
+);
+
+CREATE POLICY sec_admin_school_programs_update ON school_programs FOR UPDATE TO authenticated
+USING (
+  school_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'SECONDARY_ADMIN')
+) WITH CHECK (
+  school_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'SECONDARY_ADMIN')
+);
+
+-- 3. UNIVERSITY_ADMIN može INSERT, SELECT i UPDATE samo gdje faculty_id odgovara njegovom fakultetu
+CREATE POLICY uni_admin_study_programs_select ON study_programs FOR SELECT TO authenticated
+USING (
+  faculty_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'UNIVERSITY_ADMIN')
+);
+
+CREATE POLICY uni_admin_study_programs_insert ON study_programs FOR INSERT TO authenticated
+WITH CHECK (
+  faculty_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'UNIVERSITY_ADMIN')
+);
+
+CREATE POLICY uni_admin_study_programs_update ON study_programs FOR UPDATE TO authenticated
+USING (
+  faculty_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'UNIVERSITY_ADMIN')
+) WITH CHECK (
+  faculty_id = get_user_school_id() AND 
+  EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'UNIVERSITY_ADMIN')
+);
+
+-- 4. Javno objavljeni programi - Učenici (read-only pristup javno dostupnim programima)
+CREATE POLICY public_school_programs_select ON school_programs FOR SELECT TO authenticated
+USING (true); -- Ili uvjet is_active = true ako postoji to polje
+
+CREATE POLICY public_study_programs_select ON study_programs FOR SELECT TO authenticated
+USING (true); -- Ili uvjet is_active = true ako postoji to polje
+

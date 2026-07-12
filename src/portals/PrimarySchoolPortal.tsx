@@ -67,17 +67,41 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
   const isStudent = session?.roles.includes('PRIMARY_STUDENT') || currentUser.role === 'PRIMARY_STUDENT';
   const isTeacherOrAdmin = session?.roles.includes('PRIMARY_HOMEROOM_TEACHER') || session?.roles.includes('PRIMARY_ADMIN') || currentUser.role === 'PRIMARY_HOMEROOM_TEACHER' || currentUser.role === 'PRIMARY_ADMIN';
 
-  const [activeTab, setActiveTab] = useState<string>(isStudent ? 'pretraga' : 'verifikacija');
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tabFromUrl = params.get('tab');
+    if (tabFromUrl) return tabFromUrl;
+    return isStudent ? 'pretraga' : 'verifikacija';
+  });
+
+  const handleTabChange = (tab: string) => {
+    setActiveTab(tab);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', tab);
+    window.history.pushState({}, '', url.toString());
+  };
+
+  React.useEffect(() => {
+    const handlePopState = () => {
+      const params = new URLSearchParams(window.location.search);
+      const tabFromUrl = params.get('tab');
+      if (tabFromUrl) {
+        setActiveTab(tabFromUrl);
+      }
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   React.useEffect(() => {
     if (activeTabOverride) {
-      setActiveTab(activeTabOverride);
+      handleTabChange(activeTabOverride);
     }
   }, [activeTabOverride]);
 
   // Automatic tab switcher to prevent showing unauthorized empty tab
   React.useEffect(() => {
-    const allowedTabs = [];
+    const allowedTabs: string[] = [];
     if (hasPermission('schools.read')) allowedTabs.push('pretraga');
     if (hasPermission('applications.update')) allowedTabs.push('zelje');
     if (hasPermission('grades.read')) allowedTabs.push('bodovi');
@@ -85,9 +109,9 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
     if (hasPermission('students.read')) allowedTabs.push('verifikacija');
 
     if (!allowedTabs.includes(activeTab) && allowedTabs.length > 0) {
-      setActiveTab(allowedTabs[0]);
+      handleTabChange(allowedTabs[0]);
     }
-  }, [session, activeTab]);
+  }, [session, activeTab, hasPermission]);
 
   // Search filter states
   const [searchTerm, setSearchTerm] = useState('');
@@ -336,7 +360,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
       <div className="flex gap-2 border-b border-slate-100 dark:border-slate-800 pb-2">
         {hasPermission('schools.read') && (
           <button
-            onClick={() => setActiveTab('pretraga')}
+            type="button"
+            onClick={() => handleTabChange('pretraga')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'pretraga' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             Pretraživanje škola
@@ -344,7 +369,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
         )}
         {hasPermission('applications.update') && (
           <button
-            onClick={() => setActiveTab('zelje')}
+            type="button"
+            onClick={() => handleTabChange('zelje')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'zelje' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <ListOrdered className="h-4 w-4" /> Moja lista želja ({lukaChoices.length}/6)
@@ -352,7 +378,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
         )}
         {hasPermission('grades.read') && (
           <button
-            onClick={() => setActiveTab('bodovi')}
+            type="button"
+            onClick={() => handleTabChange('bodovi')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'bodovi' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <Calculator className="h-4 w-4" /> Izračun bodova
@@ -360,7 +387,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
         )}
         {hasPermission('documents.read') && (
           <button
-            onClick={() => setActiveTab('dokumenti')}
+            type="button"
+            onClick={() => handleTabChange('dokumenti')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5 ${activeTab === 'dokumenti' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             <Upload className="h-4 w-4" /> Dokumenti i potvrde
@@ -368,7 +396,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
         )}
         {hasPermission('students.read') && (
           <button
-            onClick={() => setActiveTab('verifikacija')}
+            type="button"
+            onClick={() => handleTabChange('verifikacija')}
             className={`px-4 py-2 rounded-xl text-xs font-bold cursor-pointer ${activeTab === 'verifikacija' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800'}`}
           >
             Učenici i dokumenti
@@ -483,7 +512,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
             {lukaChoices.length === 0 ? (
               <div className="text-center py-10 space-y-2">
                 <p className="text-slate-400 text-sm">Vaša lista želja je trenutno prazna.</p>
-                <button onClick={() => setActiveTab('pretraga')} className="text-indigo-600 hover:underline text-xs font-bold">
+                <button type="button"
+            onClick={() => handleTabChange('pretraga')} className="text-indigo-600 hover:underline text-xs font-bold">
                   Pretraži programe i dodaj ih na listu
                 </button>
               </div>
