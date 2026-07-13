@@ -370,4 +370,7 @@ export interface IntegrationEvent {
   retryCount: number;
 }
 
+export type PortalType = 'FACULTY_ADMISSIONS' | 'SECONDARY_ADMISSIONS';
+
+
 

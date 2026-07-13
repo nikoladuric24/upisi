@@ -21,6 +21,8 @@ import { PrimarySchoolPortal } from './portals/PrimarySchoolPortal';
 import { SecondarySchoolPortal } from './portals/SecondarySchoolPortal';
 import { UniversityAdminPortal } from './portals/UniversityAdminPortal';
 import { RbacProvider, useRbac } from './components/RbacContext';
+import { PortalProvider, usePortal } from './components/PortalContext';
+import { TimeoutManager } from './components/TimeoutManager';
 
 // Import our custom crafted UI components
 import { Sidebar } from './components/Sidebar';
@@ -56,8 +58,10 @@ interface AppContentProps {
 function AppContent({ user, setUser }: AppContentProps) {
   const { theme, toggleTheme } = useTheme();
   const { session, hasPermission, reloadSession, logRbacAction, clearSession } = useRbac();
+  const { config, portalType } = usePortal();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Navigation states
   const [activePage, setActivePage] = useState<string>('dashboard');
@@ -82,14 +86,28 @@ function AppContent({ user, setUser }: AppContentProps) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Initialize DB and Load User
+  // Initialize DB and Verify Session on mount
   useEffect(() => {
     initDatabase();
-    const loggedUser = getCurrentUser();
-    setUser(loggedUser);
-    if (loggedUser) {
-      setNotifications(getTable<AppNotification>('notifications').filter(n => n.userId === loggedUser.id));
-    }
+    
+    const checkSession = async () => {
+      try {
+        // Force logout on opening the portal to ensure user is logged out and must explicitly login
+        await fetch('/api/shared/auth/logout', { method: 'POST' });
+        setCurrentUser(null);
+        setUser(null);
+        clearSession();
+      } catch (err) {
+        // Safe fallback
+        setCurrentUser(null);
+        setUser(null);
+        clearSession();
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    checkSession();
   }, []);
 
   // Update notifications when user changes
@@ -105,11 +123,14 @@ function AppContent({ user, setUser }: AppContentProps) {
     setCurrentUser(newUser);
     setUser(newUser);
     reloadSession(newUser);
-    // Security log for audit:
     logRbacAction('Uspješna prijava', 'AAI@EduHr Autentifikacija', undefined, `Korisnik ${newUser.fullName} prijavljen s ulogom ${newUser.role}`);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    try {
+      await fetch('/api/shared/auth/logout', { method: 'POST' });
+    } catch (e) {}
+
     if (user) {
       logRbacAction('Odjava', 'AAI@EduHr Autentifikacija', `Uloga: ${user.role}`);
       logAuditEvent(user.id, user.email, 'ODJAVA', `Korisnik ${user.fullName} se uspješno odjavio iz sustava.`);
@@ -130,13 +151,28 @@ function AppContent({ user, setUser }: AppContentProps) {
     }
   };
 
-  // Switch role helper for simulator testing
-  const handleSimulateUser = (simUser: User) => {
-    setCurrentUser(simUser);
-    setUser(simUser);
-    reloadSession(simUser);
-    setActivePage('dashboard');
-    setPortalTabOverride('');
+  // Switch role helper for simulator testing (also logs in via backend to be secure!)
+  const handleSimulateUser = async (simUser: User) => {
+    try {
+      const response = await fetch('/api/shared/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: simUser.email })
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setCurrentUser(data.user);
+        setUser(data.user);
+        reloadSession(data.user);
+        setActivePage('dashboard');
+        setPortalTabOverride('');
+      } else {
+        const data = await response.json();
+        alert(data.error || 'Simulacija nije uspjela.');
+      }
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   // Handler for sidebar pages and deep-linking tabs
@@ -162,36 +198,40 @@ function AppContent({ user, setUser }: AppContentProps) {
     setDetailData(undefined);
   };
 
-  // Route/Portal Guard Resolver based on RBAC
+  // Route/Portal Guard Resolver based on RBAC and Domain Split
   const renderActivePortal = () => {
-    if (!session) return null;
+    if (!session || !user) return null;
 
-    if (session.roles.includes('SUPER_ADMIN')) {
-      return <SuperAdminPortal currentUser={user!} activeTabOverride={portalTabOverride} />;
-    } else if (
-      session.roles.includes('PRIMARY_ADMIN') ||
-      session.roles.includes('PRIMARY_HOMROOM_TEACHER') || // support typo check
-      session.roles.includes('PRIMARY_HOMEROOM_TEACHER') ||
-      session.roles.includes('PRIMARY_STUDENT')
-    ) {
-      return <PrimarySchoolPortal currentUser={user!} activeTabOverride={portalTabOverride} />;
-    } else if (
-      session.roles.includes('SECONDARY_ADMIN') ||
-      session.roles.includes('SECONDARY_HOMROOM_TEACHER') || // support typo check
-      session.roles.includes('SECONDARY_HOMEROOM_TEACHER') ||
-      session.roles.includes('SECONDARY_STUDENT')
-    ) {
-      return <SecondarySchoolPortal currentUser={user!} activeTabOverride={portalTabOverride} />;
-    } else if (session.roles.includes('UNIVERSITY_ADMIN')) {
-      return <UniversityAdminPortal currentUser={user!} activeTabOverride={portalTabOverride} />;
-    } else {
+    // Check if current user is allowed on this portal type
+    const isAllowed = config.allowedRoles.includes(user.role);
+    if (!isAllowed) {
       return (
-        <div className="p-8 text-center bg-red-50 text-red-800 rounded-3xl border border-red-200">
-          <ShieldAlert className="h-12 w-12 mx-auto text-red-600 mb-2" />
-          <h3 className="font-bold">Greška u autorizaciji (RBAC)</h3>
-          <p className="text-xs mt-1">Vaš korisnički račun nema definirane ovlasti u sustavu EduPortal Hrvatska.</p>
+        <div className="p-8 text-center bg-red-50 dark:bg-red-950/20 text-red-800 dark:text-red-300 rounded-3xl border border-red-200 dark:border-red-900/40">
+          <ShieldAlert className="h-12 w-12 mx-auto text-red-600 mb-2 animate-bounce" />
+          <h3 className="font-bold">Nedopušten pristup</h3>
+          <p className="text-xs mt-1">Vaša uloga ({user.role}) nema ovlasti za rad na portalu <strong>{config.name}</strong>.</p>
+          <p className="text-[10px] text-slate-400 mt-2">Molimo prijavite se s odgovarajućim korisničkim računom.</p>
         </div>
       );
+    }
+
+    if (user.role === 'SUPER_ADMIN') {
+      return <SuperAdminPortal currentUser={user} activeTabOverride={portalTabOverride} />;
+    }
+
+    if (portalType === 'FACULTY_ADMISSIONS') {
+      if (user.role === 'UNIVERSITY_ADMIN') {
+        return <UniversityAdminPortal currentUser={user} activeTabOverride={portalTabOverride} />;
+      }
+      // High school students, teachers, and admins
+      return <SecondarySchoolPortal currentUser={user} activeTabOverride={portalTabOverride} />;
+    } else {
+      // SECONDARY_ADMISSIONS
+      if (user.role === 'PRIMARY_STUDENT' || user.role === 'PRIMARY_HOMEROOM_TEACHER' || user.role === 'PRIMARY_ADMIN') {
+        return <PrimarySchoolPortal currentUser={user} activeTabOverride={portalTabOverride} />;
+      }
+      // Secondary school admins who receive applications
+      return <SecondarySchoolPortal currentUser={user} activeTabOverride={portalTabOverride} />;
     }
   };
 
@@ -212,6 +252,17 @@ function AppContent({ user, setUser }: AppContentProps) {
     }
   };
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center font-sans">
+        <div className="flex flex-col items-center gap-3">
+          <GraduationCap className="h-12 w-12 text-indigo-600 animate-bounce" />
+          <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">EduPortal: Provjera sigurnosne sesije...</p>
+        </div>
+      </div>
+    );
+  }
+
   if (!user) {
     return <AuthScreen onLogin={handleLogin} />;
   }
@@ -219,6 +270,9 @@ function AppContent({ user, setUser }: AppContentProps) {
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-800 dark:text-slate-100 transition-colors duration-300 flex flex-col font-sans">
       
+      {/* Session Inactivity Timeout Modal Manager */}
+      <TimeoutManager user={user} onLogout={handleLogout} />
+
       {/* Global Search Overlay Modal */}
       <GlobalSearchOverlay
         isOpen={isSearchOpen}
@@ -274,11 +328,11 @@ function AppContent({ user, setUser }: AppContentProps) {
               <div className="p-5 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/60 rounded-3xl shadow-xs">
                 <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 dark:border-slate-800 pb-2 mb-3 flex items-center gap-2">
                   <UserCheck className="h-4 w-4 text-indigo-500" />
-                  EduPortal Simulator
+                  Brza izmjena uloge
                 </h3>
                 
                 <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
-                  Aplikacija koristi strogi <strong>Role-Based Access Control (RBAC)</strong>. Zamijenite ulogu jednim klikom kako biste isprobali rute i portale iz različitih perspektiva.
+                  Sustav koristi strogi <strong>Role-Based Access Control (RBAC)</strong>. Odaberite ulogu dopuštenu na ovom portalu:
                 </p>
 
                 <div className="space-y-2">
@@ -289,7 +343,9 @@ function AppContent({ user, setUser }: AppContentProps) {
                     { id: 'usr-sec-stud', name: 'Ivan Jurić', role: 'SECONDARY_STUDENT', desc: 'Maturant (Postani Student)' },
                     { id: 'usr-sec-teach', name: 'Petra Novak', role: 'SECONDARY_HOMEROOM_TEACHER', desc: 'Razrednik 4.A' },
                     { id: 'usr-uni-admin', name: 'Prof. Stjepan Car', role: 'UNIVERSITY_ADMIN', desc: 'Ured za upise (FER)' }
-                  ].map(sim => (
+                  ]
+                  .filter(sim => config.allowedRoles.includes(sim.role))
+                  .map(sim => (
                     <button
                       key={sim.id}
                       onClick={() => handleSimulateUser({
@@ -357,13 +413,13 @@ function AppContent({ user, setUser }: AppContentProps) {
                 </div>
               </div>
 
-              {/* Quick Croatian Info Card */}
-              <div className="p-5 bg-linear-to-br from-indigo-50 to-purple-50 dark:from-slate-900 dark:to-slate-900 border border-indigo-100/50 dark:border-slate-800 rounded-3xl space-y-3">
-                <h4 className="font-bold text-xs text-indigo-900 dark:text-indigo-300">Tehničke napomene</h4>
-                <div className="space-y-2 text-[11px] text-indigo-950/80 dark:text-slate-400 leading-relaxed">
-                  <p>✔ <strong>PostgreSQL Baza:</strong> Simulirana relacijska arhitektura s tablicama i brzim ažuriranjima.</p>
-                  <p>✔ <strong>Row-Level Security (RLS):</strong> Korisnik vidi isključivo svoje ocjene, prijave i dokumente.</p>
-                  <p>✔ <strong>MD3 standardi:</strong> Prilagodljiv dizajn, meki obrubi i light/dark varijante.</p>
+              {/* Brand and Domain Info Card */}
+              <div className="p-5 bg-gradient-to-br from-indigo-50/50 to-purple-50/50 dark:from-slate-900/60 dark:to-slate-900/60 border border-indigo-100/30 dark:border-slate-800 rounded-3xl space-y-3">
+                <h4 className="font-bold text-xs text-indigo-900 dark:text-indigo-300">Aktivna domena</h4>
+                <div className="space-y-2 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                  <p>✔ <strong>Naziv:</strong> {config.name}</p>
+                  <p>✔ <strong>Modul:</strong> {config.portalType === 'FACULTY_ADMISSIONS' ? 'Nacionalni visokoškolski' : 'Nacionalni srednjoškolski'}</p>
+                  <p>✔ <strong>Sigurnost:</strong> Kolačići vezani isključivo uz aktivnu domenu (host-only).</p>
                 </div>
               </div>
 
@@ -386,16 +442,13 @@ function AppContent({ user, setUser }: AppContentProps) {
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
 
-  useEffect(() => {
-    initDatabase();
-    setUser(getCurrentUser());
-  }, []);
-
   return (
-    <ThemeProvider>
-      <RbacProvider currentUser={user}>
-        <AppContent user={user} setUser={setUser} />
-      </RbacProvider>
-    </ThemeProvider>
+    <PortalProvider>
+      <ThemeProvider>
+        <RbacProvider currentUser={user}>
+          <AppContent user={user} setUser={setUser} />
+        </RbacProvider>
+      </ThemeProvider>
+    </PortalProvider>
   );
 }

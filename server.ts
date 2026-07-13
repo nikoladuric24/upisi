@@ -1,6 +1,7 @@
 import express from "express";
 import path from "path";
 import crypto from "crypto";
+import fs from "fs";
 import { createServer as createViteServer } from "vite";
 
 // Define TypeScript interfaces for our server-side storage & sync
@@ -43,6 +44,269 @@ async function startServer() {
   const PORT = 3000;
 
   app.use(express.json());
+
+  // ==========================================
+  // CENTRAL PORTAL RESOLVER & SESSION ENGINE
+  // ==========================================
+  interface BackendSession {
+    id: string;
+    userId: string;
+    portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
+    host: string;
+    createdAt: string;
+    lastActivityAt: string;
+    expiresAt: string;
+  }
+
+  const BACKEND_USERS = [
+    { id: 'usr-admin', email: 'nikoladuric025@gmail.com', fullName: 'Nikola Đurić', role: 'SUPER_ADMIN', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-prim-admin', email: 'skola.prim@skole.hr', fullName: 'Ana Kovač (Ravnatelj OŠ)', role: 'PRIMARY_ADMIN', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-prim-teach', email: 'razrednik.prim@skole.hr', fullName: 'Marko Horvat (Razrednik 8.A)', role: 'PRIMARY_HOMEROOM_TEACHER', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-prim-stud', email: 'ucenik.prim@skole.hr', fullName: 'Luka Marić (Učenik 8.razred)', role: 'PRIMARY_STUDENT', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-sec-admin', email: 'skola.sec@skole.hr', fullName: 'Ivan Babić (Admin Gimnazije)', role: 'SECONDARY_ADMIN', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-sec-teach', email: 'razrednik.sec@skole.hr', fullName: 'Petra Novak (Razrednik 4.A)', role: 'SECONDARY_HOMEROOM_TEACHER', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-sec-stud', email: 'ucenik.sec@skole.hr', fullName: 'Ivan Jurić (Učenik 4.razred)', role: 'SECONDARY_STUDENT', createdAt: '2026-07-11T08:59:00Z' },
+    { id: 'usr-uni-admin', email: 'fer@unizg.hr', fullName: 'Prof. dr. sc. Stjepan Car (Admin FER-a)', role: 'UNIVERSITY_ADMIN', createdAt: '2026-07-11T08:59:00Z' }
+  ];
+
+  const backendSessions = new Map<string, BackendSession>();
+
+  function resolvePortalFromHost(hostname: string): "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS" {
+    const cleanHost = hostname.toLowerCase().split(':')[0].replace(/\.$/, '');
+    
+    if (cleanHost === 'postani-student.skolehr.xyz') {
+      return 'FACULTY_ADMISSIONS';
+    }
+    if (cleanHost === 'e-srednja.skolehr.xyz') {
+      return 'SECONDARY_ADMISSIONS';
+    }
+
+    // Development/preview mode detection
+    const isDev = process.env.NODE_ENV !== "production" ||
+                  cleanHost.includes('localhost') ||
+                  cleanHost.includes('127.0.0.1') ||
+                  cleanHost.includes('run.app') ||
+                  cleanHost.includes('stackblitz') ||
+                  cleanHost.includes('webcontainer');
+
+    if (isDev) {
+      // Allow override from headers or environment variable
+      const envType = process.env.LOCAL_PORTAL_TYPE;
+      if (envType === 'FACULTY_ADMISSIONS' || envType === 'SECONDARY_ADMISSIONS') {
+        return envType;
+      }
+      return 'FACULTY_ADMISSIONS';
+    }
+
+    throw new Error(`Nepoznata domena: ${cleanHost}. Pristup odbijen.`);
+  }
+
+  const getSessionToken = (req: express.Request): string | null => {
+    const cookieHeader = req.headers.cookie;
+    if (!cookieHeader) return null;
+    const cookies = cookieHeader.split(';').reduce((acc, cookie) => {
+      const parts = cookie.trim().split('=');
+      const key = parts[0];
+      const value = parts.slice(1).join('=');
+      if (key) acc[key] = value;
+      return acc;
+    }, {} as Record<string, string>);
+    return cookies['session_token'] || null;
+  };
+
+  const requireSession = (allowedPortals: ("FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS")[], allowedRoles?: string[]) => {
+    return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+      let portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
+      const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers.host || '';
+      try {
+        portalType = resolvePortalFromHost(hostHeader);
+      } catch (err: any) {
+        return res.status(400).json({ error: "Konfiguracijska pogreška: nepoznat host zahtjeva." });
+      }
+
+      if (!allowedPortals.includes(portalType)) {
+        return res.status(403).json({ error: `Pristup odbijen: Ova akcija ne pripada portalu ${portalType === 'FACULTY_ADMISSIONS' ? 'Postani student' : 'e-Srednja'}.` });
+      }
+
+      const token = getSessionToken(req);
+      if (!token) {
+        return res.status(401).json({ error: "Zahtjev zahtijeva prijavu." });
+      }
+
+      const session = backendSessions.get(token);
+      if (!session) {
+        return res.status(401).json({ error: "Nevažeća ili istekla sesija." });
+      }
+
+      if (session.portalType !== portalType) {
+        return res.status(401).json({ error: "Sesija ne pripada trenutnoj domeni." });
+      }
+
+      if (Date.now() > new Date(session.expiresAt).getTime()) {
+        backendSessions.delete(token);
+        res.setHeader('Set-Cookie', 'session_token=; Path=/; HttpOnly; Max-Age=0');
+        return res.status(401).json({ error: "Sesija je istekla." });
+      }
+
+      session.lastActivityAt = new Date().toISOString();
+      session.expiresAt = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+      const user = BACKEND_USERS.find(u => u.id === session.userId);
+      if (!user) {
+        return res.status(401).json({ error: "Korisnik iz sesije nije pronađen." });
+      }
+
+      if (allowedRoles && !allowedRoles.includes(user.role)) {
+        return res.status(403).json({ error: "Nemate ovlasti za ovu akciju." });
+      }
+
+      (req as any).user = user;
+      (req as any).sessionToken = token;
+      (req as any).portalType = portalType;
+      next();
+    };
+  };
+
+  // ==========================================
+  // SHARED AUTHENTICATION ENDPOINTS
+  // ==========================================
+
+  // POST /api/shared/auth/login
+  app.post("/api/shared/auth/login", (req, res) => {
+    const { email } = req.body;
+    
+    let portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
+    const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers.host || '';
+    try {
+      portalType = resolvePortalFromHost(hostHeader);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const user = BACKEND_USERS.find(u => u.email.toLowerCase().trim() === email?.toLowerCase().trim());
+    if (!user) {
+      return res.status(400).json({ error: "Korisnik s ovim e-mailom nije pronađen u EduPortal bazi." });
+    }
+
+    let isRoleAllowed = false;
+    if (portalType === 'FACULTY_ADMISSIONS') {
+      const allowedRoles = ['SECONDARY_STUDENT', 'SECONDARY_HOMEROOM_TEACHER', 'SECONDARY_ADMIN', 'UNIVERSITY_ADMIN', 'SUPER_ADMIN'];
+      isRoleAllowed = allowedRoles.includes(user.role);
+    } else {
+      const allowedRoles = ['PRIMARY_STUDENT', 'PRIMARY_HOMEROOM_TEACHER', 'PRIMARY_ADMIN', 'SECONDARY_ADMIN', 'SUPER_ADMIN'];
+      isRoleAllowed = allowedRoles.includes(user.role);
+    }
+
+    if (!isRoleAllowed) {
+      return res.status(403).json({ 
+        error: `Pristup odbijen: Korisnik s ulogom ${user.role} nema pravo pristupa portalu ${portalType === 'FACULTY_ADMISSIONS' ? 'Postani student' : 'e-Srednja'}.` 
+      });
+    }
+
+    const sessionToken = crypto.randomBytes(32).toString('hex');
+    const now = Date.now();
+    const newSession: BackendSession = {
+      id: "sess-" + crypto.randomBytes(8).toString('hex'),
+      userId: user.id,
+      portalType,
+      host: hostHeader,
+      createdAt: new Date().toISOString(),
+      lastActivityAt: new Date().toISOString(),
+      expiresAt: new Date(now + 45 * 60 * 1000).toISOString()
+    };
+
+    backendSessions.set(sessionToken, newSession);
+
+    res.setHeader('Set-Cookie', `session_token=${sessionToken}; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+
+    return res.status(200).json({
+      success: true,
+      user,
+      portalType,
+      message: `Uspješna prijava na portal.`
+    });
+  });
+
+  // GET /api/shared/auth/session
+  app.get("/api/shared/auth/session", (req, res) => {
+    let portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
+    const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers.host || '';
+    try {
+      portalType = resolvePortalFromHost(hostHeader);
+    } catch (err: any) {
+      return res.status(400).json({ error: err.message });
+    }
+
+    const token = getSessionToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Nema aktivne sesije." });
+    }
+
+    const session = backendSessions.get(token);
+    if (!session) {
+      return res.status(401).json({ error: "Sesija ne postoji." });
+    }
+
+    if (session.portalType !== portalType) {
+      return res.status(401).json({ error: "Sesija ne odgovara trenutnom portalu." });
+    }
+
+    if (Date.now() > new Date(session.expiresAt).getTime()) {
+      backendSessions.delete(token);
+      res.setHeader('Set-Cookie', 'session_token=; Path=/; HttpOnly; Max-Age=0');
+      return res.status(401).json({ error: "Sesija je istekla." });
+    }
+
+    session.lastActivityAt = new Date().toISOString();
+    session.expiresAt = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+    const user = BACKEND_USERS.find(u => u.id === session.userId);
+    if (!user) {
+      return res.status(401).json({ error: "Korisnik iz sesije ne postoji." });
+    }
+
+    return res.status(200).json({
+      success: true,
+      user,
+      portalType,
+      session: {
+        id: session.id,
+        expiresAt: session.expiresAt,
+        lastActivityAt: session.lastActivityAt
+      }
+    });
+  });
+
+  // POST /api/shared/auth/logout
+  app.post("/api/shared/auth/logout", (req, res) => {
+    const token = getSessionToken(req);
+    if (token) {
+      backendSessions.delete(token);
+    }
+    res.setHeader('Set-Cookie', 'session_token=; Path=/; HttpOnly; Max-Age=0');
+    return res.status(200).json({ success: true, message: "Uspješna odjava." });
+  });
+
+  // POST /api/shared/auth/keep-alive
+  app.post("/api/shared/auth/keep-alive", (req, res) => {
+    const token = getSessionToken(req);
+    if (!token) {
+      return res.status(401).json({ error: "Nema aktivne sesije." });
+    }
+
+    const session = backendSessions.get(token);
+    if (!session) {
+      return res.status(401).json({ error: "Sesija ne postoji." });
+    }
+
+    session.lastActivityAt = new Date().toISOString();
+    session.expiresAt = new Date(Date.now() + 45 * 60 * 1000).toISOString();
+
+    return res.status(200).json({
+      success: true,
+      expiresAt: session.expiresAt
+    });
+  });
 
   // In-memory audit and nonce logs
   const auditLogs: any[] = [];
@@ -1217,7 +1481,7 @@ async function startServer() {
   // ==========================================
   // ORIGINAL EDUPORTAL APP UNLOCK ENDPOINTS (PRESERVED)
   // ==========================================
-  app.post("/api/school-applications/:id/unlock", (req, res) => {
+  app.post("/api/school-applications/:id/unlock", requireSession(['SECONDARY_ADMISSIONS']), (req, res) => {
     const { id } = req.params;
     const { reason, requestorId, requestorRole } = req.body;
 
@@ -1248,7 +1512,7 @@ async function startServer() {
     });
   });
 
-  app.post("/api/university-applications/:id/unlock", (req, res) => {
+  app.post("/api/university-applications/:id/unlock", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
     const { id } = req.params;
     const { reason, requestorId, requestorRole } = req.body;
 
@@ -1277,6 +1541,1296 @@ async function startServer() {
       status: 'DRAFT',
       message: 'Lista je uspješno otključana i vraćena u izradu.'
     });
+  });
+
+  // ==========================================
+  // REAL STATEFUL MATURA INTEGRATION ENDPOINTS
+  // ==========================================
+
+  // CENTRAL MATURA CATALOG & DYNAMIC PERSISTENT DATABASE ENGINE
+  const CENTRAL_MATURA_CATALOG = [
+    // OBVEZNI PREDMETI (MANDATORY)
+    { id: 'matura-hrv', code: 'HRV', officialName: 'Hrvatski jezik', examPart: 'MANDATORY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-mat', code: 'MAT', officialName: 'Matematika', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-eng', code: 'ENG', officialName: 'Engleski jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: true, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-deu', code: 'DEU', officialName: 'Njemački jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: true, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-fra', code: 'FRA', officialName: 'Francuski jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: true, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-ita', code: 'ITA', officialName: 'Talijanski jezik kao strani jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: true, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-spa', code: 'SPA', officialName: 'Španjolski jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: true, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-lat', code: 'LAT', officialName: 'Latinski jezik', examPart: 'MANDATORY', hasLevels: true, allowedLevels: ['A', 'B'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: true, active: true },
+    { id: 'matura-grc', code: 'GRC', officialName: 'Grčki jezik', examPart: 'MANDATORY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: true, active: true },
+
+    // IZBORNI PREDMETI (ELECTIVE)
+    { id: 'matura-bio', code: 'BIO', officialName: 'Biologija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-eti', code: 'ETI', officialName: 'Etika', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-fil', code: 'FIL', officialName: 'Filozofija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-fiz', code: 'FIZ', officialName: 'Fizika', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-geo', code: 'GEO', officialName: 'Geografija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-gla', code: 'GLA', officialName: 'Glazbena umjetnost', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-inf', code: 'INF', officialName: 'Informatika', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-kem', code: 'KEM', officialName: 'Kemija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-lik', code: 'LIK', officialName: 'Likovna umjetnost', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-log', code: 'LOG', officialName: 'Logika', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-pig', code: 'PIG', officialName: 'Politika i gospodarstvo', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-pov', code: 'POV', officialName: 'Povijest', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-psi', code: 'PSI', officialName: 'Psihologija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-soc', code: 'SOC', officialName: 'Sociologija', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+    { id: 'matura-vje', code: 'VJE', officialName: 'Vjeronauk', examPart: 'ELECTIVE', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: false, isClassicalLanguage: false, active: true },
+
+    // JEZICI NACIONALNIH MANJINA (MINORITY)
+    { id: 'matura-ces', code: 'CES', officialName: 'Češki jezik', examPart: 'MINORITY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: true, isClassicalLanguage: false, active: true },
+    { id: 'matura-mad', code: 'MAD', officialName: 'Mađarski jezik i književnost', examPart: 'MINORITY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: true, isClassicalLanguage: false, active: true },
+    { id: 'matura-srp', code: 'SRP', officialName: 'Srpski jezik', examPart: 'MINORITY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: true, isClassicalLanguage: false, active: true },
+    { id: 'matura-it-manj', code: 'ITA_MIN', officialName: 'Talijanski jezik i književnost', examPart: 'MINORITY', hasLevels: false, allowedLevels: ['SINGLE'], isForeignLanguage: false, isMinorityLanguage: true, isClassicalLanguage: false, active: true }
+  ];
+
+  const DB_FILE = path.join(process.cwd(), "db_matura.json");
+
+  function readDb() {
+    if (!fs.existsSync(DB_FILE)) {
+      const initialDb = {
+        exam_periods: [
+          {
+            id: 'ep-ljetni-2026',
+            name: 'Ljetni rok 2026.',
+            academic_year: '2025./2026.',
+            period_type: 'LJETNI',
+            registration_opens_at: '2026-02-01T12:00:00Z',
+            registration_closes_at: '2026-05-15T12:00:00Z',
+            withdrawal_closes_at: '2026-05-15T12:00:00Z',
+            registrations_lock_at: '2026-05-15T12:00:00Z',
+            late_withdrawal_deadline: '2026-05-25T12:00:00Z',
+            exams_start_at: '2026-06-01',
+            exams_end_at: '2026-06-30',
+            temporary_results_at: '2026-07-02T12:00:00Z',
+            appeals_close_at: '2026-07-04T12:00:00Z',
+            final_results_at: '2026-07-10T12:00:00Z',
+            status: 'REGISTRATION_OPEN',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'ep-jesenski-2026',
+            name: 'Jesenski rok 2026.',
+            academic_year: '2025./2026.',
+            period_type: 'JESENSKI',
+            registration_opens_at: '2026-08-01T12:00:00Z',
+            registration_closes_at: '2026-08-25T12:00:00Z',
+            withdrawal_closes_at: '2026-08-25T12:00:00Z',
+            registrations_lock_at: '2026-08-25T12:00:00Z',
+            late_withdrawal_deadline: '2026-08-30T12:00:00Z',
+            exams_start_at: '2026-09-01',
+            exams_end_at: '2026-09-15',
+            temporary_results_at: '2026-09-17T12:00:00Z',
+            appeals_close_at: '2026-09-19T12:00:00Z',
+            final_results_at: '2026-09-22T12:00:00Z',
+            status: 'DRAFT',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        exam_sessions: [
+          {
+            id: 'es-hrv',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-hrv',
+            level: 'SINGLE',
+            exam_date: '2026-06-15',
+            start_time: '09:00',
+            duration_minutes: 180,
+            maximum_points: 100,
+            passing_threshold: 40,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-mat-a',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-mat',
+            level: 'A',
+            exam_date: '2026-06-17',
+            start_time: '09:00',
+            duration_minutes: 180,
+            maximum_points: 100,
+            passing_threshold: 45,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-mat-b',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-mat',
+            level: 'B',
+            exam_date: '2026-06-17',
+            start_time: '09:00',
+            duration_minutes: 150,
+            maximum_points: 80,
+            passing_threshold: 30,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-eng-a',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-eng',
+            level: 'A',
+            exam_date: '2026-06-19',
+            start_time: '09:00',
+            duration_minutes: 180,
+            maximum_points: 100,
+            passing_threshold: 45,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-eng-b',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-eng',
+            level: 'B',
+            exam_date: '2026-06-19',
+            start_time: '09:00',
+            duration_minutes: 120,
+            maximum_points: 80,
+            passing_threshold: 30,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-fiz',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-fiz',
+            level: 'SINGLE',
+            exam_date: '2026-06-22',
+            start_time: '09:00',
+            duration_minutes: 180,
+            maximum_points: 100,
+            passing_threshold: 35,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          },
+          {
+            id: 'es-inf',
+            exam_period_id: 'ep-ljetni-2026',
+            subject_id: 'matura-inf',
+            level: 'SINGLE',
+            exam_date: '2026-06-23',
+            start_time: '14:00',
+            duration_minutes: 150,
+            maximum_points: 100,
+            passing_threshold: 40,
+            status: 'ACTIVE',
+            created_by: 'usr-admin',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          }
+        ],
+        exam_registrations: [], // COMPLETELY EMPTY INIT
+        exam_results: [], // COMPLETELY EMPTY INIT
+        exam_result_history: [],
+        accommodation_requests: [],
+        accommodation_documents: [],
+        accommodation_measures: [],
+        accommodation_measure_exams: [],
+        accommodation_decisions: [],
+        accommodation_deliveries: [],
+        accommodation_history: []
+      };
+      fs.writeFileSync(DB_FILE, JSON.stringify(initialDb, null, 2), "utf8");
+      return initialDb;
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
+      if (!data.exam_periods) data.exam_periods = [];
+      if (!data.exam_sessions) data.exam_sessions = [];
+      if (!data.exam_registrations) data.exam_registrations = [];
+      if (!data.exam_results) data.exam_results = [];
+      if (!data.exam_result_history) data.exam_result_history = [];
+      if (!data.accommodation_requests) data.accommodation_requests = [];
+      if (!data.accommodation_documents) data.accommodation_documents = [];
+      if (!data.accommodation_measures) data.accommodation_measures = [];
+      if (!data.accommodation_measure_exams) data.accommodation_measure_exams = [];
+      if (!data.accommodation_decisions) data.accommodation_decisions = [];
+      if (!data.accommodation_deliveries) data.accommodation_deliveries = [];
+      if (!data.accommodation_history) data.accommodation_history = [];
+      return data;
+    } catch (e) {
+      fs.unlinkSync(DB_FILE);
+      return readDb();
+    }
+  }
+
+  function writeDb(data: any) {
+    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), "utf8");
+  }
+
+  // API to retrieve all exam periods
+  app.get("/api/matura/periods", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    res.json(db.exam_periods);
+  });
+
+  // API to create a new exam period
+  app.post("/api/matura/periods", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo glavni administrator može stvarati ispitne rokove." });
+    }
+
+    const { name, academic_year, period_type, registration_opens_at, registration_closes_at, withdrawal_closes_at, registrations_lock_at, late_withdrawal_deadline, exams_start_at, exams_end_at, temporary_results_at, appeals_close_at, final_results_at, status } = req.body;
+
+    if (!name || !academic_year || !period_type) {
+      return res.status(400).json({ error: "Nedostaju osnovni podaci za ispitni rok." });
+    }
+
+    const db = readDb();
+    const newPeriod = {
+      id: `ep-${Date.now()}`,
+      name,
+      academic_year,
+      period_type,
+      registration_opens_at: registration_opens_at || new Date().toISOString(),
+      registration_closes_at: registration_closes_at || new Date().toISOString(),
+      withdrawal_closes_at: withdrawal_closes_at || new Date().toISOString(),
+      registrations_lock_at: registrations_lock_at || new Date().toISOString(),
+      late_withdrawal_deadline: late_withdrawal_deadline || new Date().toISOString(),
+      exams_start_at: exams_start_at || '',
+      exams_end_at: exams_end_at || '',
+      temporary_results_at: temporary_results_at || '',
+      appeals_close_at: appeals_close_at || '',
+      final_results_at: final_results_at || '',
+      status: status || 'DRAFT',
+      created_by: user.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    db.exam_periods.push(newPeriod);
+    writeDb(db);
+
+    res.json({ success: true, period: newPeriod });
+  });
+
+  // API to update an exam period
+  app.put("/api/matura/periods/:id", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo glavni administrator može mijenjati ispitne rokove." });
+    }
+
+    const { id } = req.params;
+    const db = readDb();
+    const index = db.exam_periods.findIndex((p: any) => p.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "Ispitni rok nije pronađen." });
+    }
+
+    db.exam_periods[index] = {
+      ...db.exam_periods[index],
+      ...req.body,
+      updated_at: new Date().toISOString()
+    };
+
+    writeDb(db);
+    res.json({ success: true, period: db.exam_periods[index] });
+  });
+
+  // API to retrieve exam sessions
+  app.get("/api/matura/sessions", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    res.json(db.exam_sessions);
+  });
+
+  // API to add an exam session to a period
+  app.post("/api/matura/sessions", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo glavni administrator može dodavati ispite u rok." });
+    }
+
+    const { exam_period_id, subject_id, level, exam_date, start_time, duration_minutes, maximum_points, passing_threshold, status } = req.body;
+
+    if (!exam_period_id || !subject_id || !level || !maximum_points) {
+      return res.status(400).json({ error: "Nedostaju obvezni podaci za ispit." });
+    }
+
+    const db = readDb();
+    const period = db.exam_periods.find((p: any) => p.id === exam_period_id);
+    if (!period) {
+      return res.status(404).json({ error: "Ispitni rok ne postoji." });
+    }
+
+    const newSession = {
+      id: `es-${Date.now()}`,
+      exam_period_id,
+      subject_id,
+      level,
+      exam_date: exam_date || '',
+      start_time: start_time || '09:00',
+      duration_minutes: duration_minutes ? Number(duration_minutes) : 180,
+      maximum_points: Number(maximum_points),
+      passing_threshold: passing_threshold ? Number(passing_threshold) : 40,
+      status: status || 'ACTIVE',
+      created_by: user.id,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
+    };
+
+    db.exam_sessions.push(newSession);
+    writeDb(db);
+
+    res.json({ success: true, session: newSession });
+  });
+
+  // GET available exams (filtered by open registration periods)
+  app.get("/api/matura/available-exams", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    if (!ematicaOnline) {
+      return res.status(503).json({ error: "Veza s e-Maticom nije uspostavljena ili je portal izvan mreže." });
+    }
+
+    const { studentId } = req.query;
+    let extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+    if (studentId && studentId !== 'stud-ivan') {
+      extStudent = ematicaDb.students.find(s => s.email.includes(String(studentId).toLowerCase()));
+    }
+
+    if (!extStudent) {
+      return res.status(404).json({ error: "Učenik nije pronađen u sustavu e-Matica." });
+    }
+
+    const extSubjects = ematicaDb.subjects[extStudent.id] || [];
+    const db = readDb();
+
+    // Find sessions belonging to active/open periods
+    const openPeriods = db.exam_periods.filter((p: any) => p.status === 'REGISTRATION_OPEN');
+    const openPeriodIds = openPeriods.map((p: any) => p.id);
+
+    const activeSessions = db.exam_sessions.filter((s: any) => openPeriodIds.includes(s.exam_period_id) && s.status === 'ACTIVE');
+
+    // Filter available mandatory subjects
+    const mandatoryList = activeSessions.filter((s: any) => {
+      const sub = CENTRAL_MATURA_CATALOG.find(c => c.id === s.subject_id);
+      if (!sub || sub.examPart !== 'MANDATORY') return false;
+
+      // Croatian and Math are always available
+      if (sub.code === 'HRV' || sub.code === 'MAT') return true;
+
+      // Foreign languages: learned in school
+      if (sub.isForeignLanguage) {
+        return extSubjects.some(es => {
+          const nameLower = es.name.toLowerCase();
+          const subNameLower = sub.officialName.toLowerCase();
+          return nameLower.includes(sub.code.toLowerCase()) || nameLower.includes(subNameLower) || es.code === sub.code;
+        });
+      }
+
+      // Classical languages
+      if (sub.isClassicalLanguage) {
+        return extSubjects.some(es => es.code === sub.code || es.name.toLowerCase().includes('latinski') || es.name.toLowerCase().includes('grčki'));
+      }
+
+      return false;
+    }).map((sess: any) => {
+      const sub = CENTRAL_MATURA_CATALOG.find(c => c.id === sess.subject_id);
+      return {
+        ...sub,
+        sessionId: sess.id,
+        periodId: sess.exam_period_id,
+        level: sess.level,
+        date: sess.exam_date,
+        time: sess.start_time,
+        durationMinutes: sess.duration_minutes
+      };
+    });
+
+    // Elective and minority subjects
+    const electiveList = activeSessions.filter((s: any) => {
+      const sub = CENTRAL_MATURA_CATALOG.find(c => c.id === s.subject_id);
+      if (!sub) return false;
+      
+      if (sub.examPart === 'ELECTIVE') return true;
+
+      if (sub.examPart === 'MINORITY') {
+        return extStudent.minorityProgram || extSubjects.some(es => es.code === sub.code || es.name.toLowerCase().includes(sub.officialName.toLowerCase()));
+      }
+
+      return false;
+    }).map((sess: any) => {
+      const sub = CENTRAL_MATURA_CATALOG.find(c => c.id === sess.subject_id);
+      return {
+        ...sub,
+        sessionId: sess.id,
+        periodId: sess.exam_period_id,
+        level: sess.level,
+        date: sess.exam_date,
+        time: sess.start_time,
+        durationMinutes: sess.duration_minutes
+      };
+    });
+
+    const learnedLanguages = extSubjects
+      .filter(es => es.foreignLanguageOrder)
+      .map(es => ({
+        code: es.code || 'ENG',
+        name: es.name,
+        order: es.foreignLanguageOrder,
+        durationYears: es.durationYears
+      }));
+
+    res.json({
+      mandatory: mandatoryList,
+      elective: electiveList,
+      eligibility: {
+        source: "E_MATICA",
+        lastSyncedAt: new Date().toISOString(),
+        foreignLanguages: learnedLanguages,
+        schoolName: extStudent.schoolId === 'ext-sch-4' ? 'XV. Gimnazija (MIOC)' : 'Srednja škola',
+        programName: extStudent.programId === 'ext-prog-1' ? 'Prirodoslovno-matematička gimnazija (IBM program)' : 'Gimnazija',
+        gradeLevel: extStudent.gradeLevel,
+        classSection: '4.A',
+        isClassicalGymnasium: extSubjects.some(es => es.name.toLowerCase().includes('latinski') || es.name.toLowerCase().includes('grčki'))
+      }
+    });
+  });
+
+  // Get active student registrations
+  app.get("/api/matura/registrations", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const { studentId } = req.query;
+    const filterId = studentId ? String(studentId) : 'stud-ivan';
+    
+    const db = readDb();
+    const regs = db.exam_registrations.filter((r: any) => r.student_id === filterId && r.registration_status === 'REGISTERED');
+    
+    const enriched = regs.map((r: any) => {
+      const sess = db.exam_sessions.find((s: any) => s.id === r.exam_session_id);
+      const subject = CENTRAL_MATURA_CATALOG.find(s => s.id === r.subject_id);
+      return {
+        id: r.id,
+        studentId: r.student_id,
+        examSessionId: r.exam_session_id,
+        subjectId: r.subject_id,
+        level: r.level,
+        registeredAt: r.registered_at,
+        status: r.registration_status,
+        subject,
+        date: sess ? sess.exam_date : '2026-06-20',
+        time: sess ? sess.start_time : '09:00',
+        periodId: sess ? sess.exam_period_id : ''
+      };
+    });
+
+    res.json(enriched);
+  });
+
+  // Register an exam
+  app.post("/api/matura/register-exam", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    if (!ematicaOnline) {
+      return res.status(503).json({ error: "Veza s e-Maticom nije uspostavljena ili je portal izvan mreže." });
+    }
+
+    const { studentId, subjectId, level } = req.body;
+
+    if (!studentId || !subjectId) {
+      return res.status(400).json({ error: "Nedostaju podaci za prijavu ispita." });
+    }
+
+    const db = readDb();
+
+    // Check if there is an active exam period that is open for registration
+    const openPeriods = db.exam_periods.filter((p: any) => p.status === 'REGISTRATION_OPEN');
+    if (openPeriods.length === 0) {
+      return res.status(400).json({ error: "Trenutačno nema aktivnog ispitnog roka otvorenog za prijave." });
+    }
+
+    const openPeriodIds = openPeriods.map((p: any) => p.id);
+
+    // Find an active session matching subject and level in the open period(s)
+    const session = db.exam_sessions.find((s: any) => 
+      openPeriodIds.includes(s.exam_period_id) && 
+      s.subject_id === subjectId && 
+      (s.level === level || s.level === 'SINGLE') &&
+      s.status === 'ACTIVE'
+    );
+
+    if (!session) {
+      return res.status(404).json({ error: "Nije pronađen otvoren i aktivan ispit za ovaj predmet i razinu." });
+    }
+
+    const period = openPeriods.find((p: any) => p.id === session.exam_period_id);
+    if (new Date() > new Date(period.registration_closes_at)) {
+      return res.status(400).json({ error: "Rok za prijavu ispita u ovom ispitnom roku je završio." });
+    }
+
+    const subject = CENTRAL_MATURA_CATALOG.find(s => s.id === subjectId);
+    if (!subject || !subject.active) {
+      return res.status(404).json({ error: "Predmet nije pronađen u centralnom katalogu ili nije aktivan." });
+    }
+
+    // Duplication check
+    const alreadyRegistered = db.exam_registrations.some((r: any) => 
+      r.student_id === studentId && 
+      r.subject_id === subjectId && 
+      r.registration_status === 'REGISTERED'
+    );
+    if (alreadyRegistered) {
+      return res.status(400).json({ error: "Ovaj ispit je već prijavljen." });
+    }
+
+    // Obvezni strani jezik limit check:
+    if (subject.examPart === 'MANDATORY' && subject.isForeignLanguage) {
+      const hasOtherForeignMandatory = db.exam_registrations.some((r: any) => {
+        if (r.student_id !== studentId || r.registration_status !== 'REGISTERED') return false;
+        const sub = CENTRAL_MATURA_CATALOG.find(s => s.id === r.subject_id);
+        return sub && sub.examPart === 'MANDATORY' && sub.isForeignLanguage;
+      });
+      if (hasOtherForeignMandatory) {
+        return res.status(400).json({ error: "Već imate prijavljen obvezni strani jezik. Dopušten je najviše jedan obvezni strani jezik." });
+      }
+    }
+
+    // Eligibility check from e-Matica
+    let extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+    if (studentId !== 'stud-ivan') {
+      extStudent = ematicaDb.students.find(s => s.email.includes(String(studentId).toLowerCase()));
+    }
+
+    if (extStudent) {
+      const extSubjects = ematicaDb.subjects[extStudent.id] || [];
+      if (subject.isForeignLanguage) {
+        const learned = extSubjects.some(es => es.code === subject.code || es.name.toLowerCase().includes(subject.officialName.toLowerCase()));
+        if (!learned) {
+          return res.status(400).json({ error: `Učenik prema podacima e-Matice nije učio ${subject.officialName} te ga ne može prijaviti.` });
+        }
+      }
+    }
+
+    // Create new registration
+    const newReg = {
+      id: `reg-${Date.now()}`,
+      student_id: studentId,
+      exam_session_id: session.id,
+      subject_id: subjectId,
+      level: session.level,
+      registration_status: 'REGISTERED',
+      registered_at: new Date().toISOString(),
+      withdrawn_at: null,
+      locked_at: null,
+      registration_source: 'STUDENT_PORTAL',
+      created_by: studentId,
+      updated_at: new Date().toISOString(),
+      withdrawal_type: null,
+      withdrawal_reason_code: null,
+      withdrawal_reason_text: null,
+      withdrawal_document_id: null,
+      withdrawn_by: null,
+      withdrawn_by_role: null
+    };
+
+    db.exam_registrations.push(newReg);
+    writeDb(db);
+
+    res.status(200).json({
+      success: true,
+      registration: {
+        id: newReg.id,
+        studentId: newReg.student_id,
+        examSessionId: newReg.exam_session_id,
+        subjectId: newReg.subject_id,
+        level: newReg.level,
+        registeredAt: newReg.registered_at,
+        status: newReg.registration_status,
+        subject,
+        date: session.exam_date,
+        time: session.start_time
+      },
+      message: `Uspješno prijavljen ispit mature: ${subject.officialName} (${newReg.level})`
+    });
+  });
+
+  // Regular Student Cancel/Withdraw Exam
+  app.post("/api/matura/cancel-exam", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ error: "Nedostaje ID prijave." });
+    }
+
+    const db = readDb();
+    const reg = db.exam_registrations.find((r: any) => r.id === id);
+    if (!reg) {
+      return res.status(404).json({ error: "Prijava ispita nije pronađena." });
+    }
+
+    const sess = db.exam_sessions.find((s: any) => s.id === reg.exam_session_id);
+    if (!sess) {
+      return res.status(404).json({ error: "Ispitna sesija nije pronađena." });
+    }
+
+    const period = db.exam_periods.find((p: any) => p.id === sess.exam_period_id);
+    if (!period) {
+      return res.status(404).json({ error: "Ispitni rok nije pronađen." });
+    }
+
+    // Enforce student withdrawal deadline
+    if (new Date() > new Date(period.withdrawal_closes_at)) {
+      return res.status(400).json({ error: "Rok za redovnu odjavu ispita je istekao. Za naknadnu odjavu obratite se ispitnom koordinatoru škole." });
+    }
+
+    reg.registration_status = 'WITHDRAWN';
+    reg.withdrawn_at = new Date().toISOString();
+    reg.withdrawn_by = (req as any).user.id;
+    reg.withdrawn_by_role = (req as any).user.role;
+    reg.withdrawal_type = 'REGULAR';
+    reg.updated_at = new Date().toISOString();
+
+    writeDb(db);
+    res.status(200).json({ success: true, message: "Ispit je uspješno odjavljen." });
+  });
+
+  // Change exam level
+  app.post("/api/matura/change-level", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const { id, newLevel } = req.body;
+    if (!id || !newLevel) {
+      return res.status(400).json({ error: "Nedostaju podaci za izmjenu razine." });
+    }
+
+    const db = readDb();
+    const reg = db.exam_registrations.find((r: any) => r.id === id);
+    if (!reg) {
+      return res.status(404).json({ error: "Prijava ispita nije pronađena." });
+    }
+
+    const sess = db.exam_sessions.find((s: any) => s.id === reg.exam_session_id);
+    if (!sess) {
+      return res.status(404).json({ error: "Ispitna sesija nije pronađena." });
+    }
+
+    const period = db.exam_periods.find((p: any) => p.id === sess.exam_period_id);
+    if (!period) {
+      return res.status(404).json({ error: "Ispitni rok nije pronađen." });
+    }
+
+    // Enforce student deadline
+    if (new Date() > new Date(period.withdrawal_closes_at)) {
+      return res.status(400).json({ error: "Prijava je zaključana. Više nije moguće mijenjati razinu ispita." });
+    }
+
+    const targetSession = db.exam_sessions.find((s: any) => 
+      s.exam_period_id === sess.exam_period_id && 
+      s.subject_id === reg.subject_id && 
+      s.level === newLevel &&
+      s.status === 'ACTIVE'
+    );
+
+    if (!targetSession) {
+      return res.status(404).json({ error: `Nije pronađen aktivan ispit za razinu ${newLevel} u istom ispitnom roku.` });
+    }
+
+    reg.exam_session_id = targetSession.id;
+    reg.level = newLevel;
+    reg.updated_at = new Date().toISOString();
+
+    writeDb(db);
+    res.status(200).json({ success: true, message: `Razina uspješno promijenjena u ${newLevel}.` });
+  });
+
+  // GET admin listings for registrations
+  app.get("/api/matura/registrations-admin", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    const { schoolId, status } = req.query;
+
+    let regs = db.exam_registrations;
+    if (status) {
+      regs = regs.filter((r: any) => r.registration_status === status);
+    }
+
+    const enriched = regs.map((r: any) => {
+      const sess = db.exam_sessions.find((s: any) => s.id === r.exam_session_id);
+      const subject = CENTRAL_MATURA_CATALOG.find(s => s.id === r.subject_id);
+      const period = sess ? db.exam_periods.find((p: any) => p.id === sess.exam_period_id) : null;
+      
+      let extStudent = ematicaDb.students.find(s => s.id === r.student_id);
+      if (!extStudent && r.student_id === 'stud-ivan') {
+        extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+      }
+
+      return {
+        ...r,
+        studentName: extStudent ? `${extStudent.firstName} ${extStudent.lastName}` : 'Nepoznati učenik',
+        studentOib: extStudent ? extStudent.oib : '',
+        schoolId: extStudent ? extStudent.schoolId : '',
+        subjectName: subject ? subject.officialName : 'Nepoznati predmet',
+        examDate: sess ? sess.exam_date : '',
+        startTime: sess ? sess.start_time : '',
+        periodName: period ? period.name : '',
+        lateWithdrawalAllowed: period ? (new Date() < new Date(period.late_withdrawal_deadline)) : false
+      };
+    });
+
+    if (schoolId) {
+      res.json(enriched.filter((e: any) => e.schoolId === schoolId));
+    } else {
+      res.json(enriched);
+    }
+  });
+
+  // Late Withdrawal by School Admin
+  app.post("/api/matura/late-withdraw", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SECONDARY_ADMIN' && user.role !== 'SUPER_ADMIN' && user.role !== 'SECONDARY_HOMEROOM_TEACHER') {
+      return res.status(403).json({ error: "Samo ispitni koordinatori škola ili administratori mogu vršiti naknadnu odjavu ispita." });
+    }
+
+    const { registrationId, reasonCode, reasonText } = req.body;
+    if (!registrationId || !reasonCode) {
+      return res.status(400).json({ error: "Nedostaje ID prijave ili opravdani razlog odjave." });
+    }
+
+    const db = readDb();
+    const reg = db.exam_registrations.find((r: any) => r.id === registrationId);
+    if (!reg) {
+      return res.status(404).json({ error: "Prijava ispita nije pronađena." });
+    }
+
+    const sess = db.exam_sessions.find((s: any) => s.id === reg.exam_session_id);
+    const period = sess ? db.exam_periods.find((p: any) => p.id === sess.exam_period_id) : null;
+
+    if (!period) {
+      return res.status(404).json({ error: "Ispitni rok za ovu prijavu nije pronađen." });
+    }
+
+    if (new Date() > new Date(period.late_withdrawal_deadline)) {
+      return res.status(400).json({ error: "Rok za naknadnu odjavu ispita kod ispitnog povjerenstva je istekao." });
+    }
+
+    reg.previous_registration_status = reg.registration_status;
+    reg.registration_status = 'WITHDRAWN_LATE';
+    reg.withdrawn_at = new Date().toISOString();
+    reg.withdrawn_by = user.id;
+    reg.withdrawn_by_role = user.role;
+    reg.withdrawal_type = 'LATE_WITHDRAWAL';
+    reg.withdrawal_reason_code = reasonCode;
+    reg.withdrawal_reason_text = reasonText || '';
+    reg.updated_at = new Date().toISOString();
+
+    writeDb(db);
+    res.json({ success: true, message: "Ispit je uspješno naknadno odjavljen uz opravdani razlog." });
+  });
+
+  // GET results for a student (filtered to published/final results)
+  app.get("/api/matura/results", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const { studentId } = req.query;
+    const filterId = studentId ? String(studentId) : 'stud-ivan';
+    const db = readDb();
+    
+    // Find registrations for this student
+    const regs = db.exam_registrations.filter((r: any) => r.student_id === filterId);
+    const regIds = regs.map((r: any) => r.id);
+    
+    // Find results for these registrations that are PUBLISHED or FINAL
+    const results = db.exam_results.filter((r: any) => 
+      regIds.includes(r.exam_registration_id) && 
+      (r.result_status === 'PUBLISHED' || r.result_status === 'FINAL')
+    );
+    
+    const enriched = results.map((r: any) => {
+      const reg = regs.find((rg: any) => rg.id === r.exam_registration_id);
+      const sess = reg ? db.exam_sessions.find((s: any) => s.id === reg.exam_session_id) : null;
+      const subject = reg ? CENTRAL_MATURA_CATALOG.find(s => s.id === reg.subject_id) : null;
+      
+      return {
+        id: r.id,
+        examRegistrationId: r.exam_registration_id,
+        studentId: r.studentId,
+        pointsEarned: r.points_earned,
+        maximumPoints: r.maximum_points,
+        scorePercentage: r.percentage,
+        grade: r.grade,
+        outcome: r.outcome,
+        attendanceStatus: r.attendance_status,
+        resultStatus: r.result_status,
+        subject,
+        level: reg ? reg.level : '',
+        date: sess ? sess.exam_date : ''
+      };
+    });
+    
+    res.json(enriched);
+  });
+
+  // GET results listing for admin
+  app.get("/api/matura/results-admin", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    const enriched = db.exam_results.map((r: any) => {
+      const reg = db.exam_registrations.find((rg: any) => rg.id === r.exam_registration_id);
+      const sess = reg ? db.exam_sessions.find((s: any) => s.id === reg.exam_session_id) : null;
+      const subject = reg ? CENTRAL_MATURA_CATALOG.find(s => s.id === reg.subject_id) : null;
+      
+      let extStudent = reg ? ematicaDb.students.find(s => s.id === reg.student_id) : null;
+      if (!extStudent && reg?.student_id === 'stud-ivan') {
+        extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+      }
+
+      return {
+        ...r,
+        studentName: extStudent ? `${extStudent.firstName} ${extStudent.lastName}` : 'Nepoznati učenik',
+        studentOib: extStudent ? extStudent.oib : '',
+        subjectName: subject ? subject.officialName : 'Nepoznati predmet',
+        level: reg ? reg.level : '',
+        examDate: sess ? sess.exam_date : ''
+      };
+    });
+
+    res.json(enriched);
+  });
+
+  // Enter/Update Exam Result
+  app.post("/api/matura/results", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo glavni administrator sustava može unositi i mijenjati rezultate." });
+    }
+
+    const { exam_registration_id, points_earned, attendance_status, note } = req.body;
+    if (!exam_registration_id) {
+      return res.status(400).json({ error: "Nedostaje ID prijave ispita." });
+    }
+
+    const db = readDb();
+    const reg = db.exam_registrations.find((r: any) => r.id === exam_registration_id);
+    if (!reg) {
+      return res.status(404).json({ error: "Prijava ispita nije pronađena." });
+    }
+
+    const sess = db.exam_sessions.find((s: any) => s.id === reg.exam_session_id);
+    if (!sess) {
+      return res.status(404).json({ error: "Ispitna sesija nije pronađena." });
+    }
+
+    const maxPoints = sess.maximum_points;
+    const pts = points_earned !== undefined ? Number(points_earned) : 0;
+
+    if (attendance_status === 'PRESENT' && (pts < 0 || pts > maxPoints)) {
+      return res.status(400).json({ error: `Osvojeni bodovi moraju biti između 0 i maksimalno ${maxPoints} bodova.` });
+    }
+
+    const percentage = attendance_status === 'PRESENT' ? Number(((pts / maxPoints) * 100).toFixed(2)) : 0;
+    
+    let grade = 1;
+    let outcome = 'PAO';
+    
+    if (attendance_status === 'PRESENT') {
+      const threshold = sess.passing_threshold;
+      if (percentage >= threshold) {
+        outcome = 'POLOŽIO';
+        const range = 100 - threshold;
+        const step = range / 4;
+        if (percentage >= threshold + step * 3) {
+          grade = 5;
+        } else if (percentage >= threshold + step * 2) {
+          grade = 4;
+        } else if (percentage >= threshold + step) {
+          grade = 3;
+        } else {
+          grade = 2;
+        }
+      } else {
+        grade = 1;
+        outcome = 'PAO';
+      }
+    } else {
+      outcome = attendance_status || 'NEPRISTUPIO';
+      grade = 0;
+    }
+
+    let existingResult = db.exam_results.find((r: any) => r.exam_registration_id === exam_registration_id);
+    const isNew = !existingResult;
+
+    if (existingResult) {
+      const historyLog = {
+        id: `h-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
+        exam_result_id: existingResult.id,
+        previous_value: JSON.stringify({
+          points_earned: existingResult.points_earned,
+          percentage: existingResult.percentage,
+          grade: existingResult.grade,
+          outcome: existingResult.outcome,
+          attendance_status: existingResult.attendance_status
+        }),
+        new_value: JSON.stringify({
+          points_earned: pts,
+          percentage,
+          grade,
+          outcome,
+          attendance_status
+        }),
+        reason: note || 'Ispravak administratora',
+        changed_by: user.id,
+        changed_at: new Date().toISOString()
+      };
+      db.exam_result_history.push(historyLog);
+
+      existingResult.points_earned = pts;
+      existingResult.maximum_points = maxPoints;
+      existingResult.percentage = percentage;
+      existingResult.grade = grade;
+      existingResult.outcome = outcome;
+      existingResult.attendance_status = attendance_status || 'PRESENT';
+      existingResult.note = note || '';
+      existingResult.updated_at = new Date().toISOString();
+      existingResult.scorePercentage = percentage;
+      existingResult.pointsEarned = pts;
+    } else {
+      existingResult = {
+        id: `res-${Date.now()}`,
+        exam_registration_id,
+        studentId: reg.student_id,
+        examPeriodId: sess.exam_period_id,
+        points_earned: pts,
+        maximum_points: maxPoints,
+        percentage,
+        grade,
+        outcome,
+        attendance_status: attendance_status || 'PRESENT',
+        result_status: 'DRAFT',
+        entered_by: user.id,
+        entered_at: new Date().toISOString(),
+        published_at: null,
+        finalized_at: null,
+        note: note || '',
+        updated_at: new Date().toISOString(),
+        scorePercentage: percentage,
+        pointsEarned: pts
+      };
+      db.exam_results.push(existingResult);
+    }
+
+    writeDb(db);
+    res.json({ success: true, result: existingResult, isNew });
+  });
+
+  // Bulk publish results
+  app.post("/api/matura/results-publish", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo glavni administrator može objavljivati rezultate." });
+    }
+
+    const { status, periodId } = req.body;
+    if (!status || !periodId) {
+      return res.status(400).json({ error: "Nedostaju status i ID ispitnog roka." });
+    }
+
+    const db = readDb();
+    let count = 0;
+
+    db.exam_results.forEach((r: any) => {
+      const reg = db.exam_registrations.find((rg: any) => rg.id === r.exam_registration_id);
+      const sess = reg ? db.exam_sessions.find((s: any) => s.id === reg.exam_session_id) : null;
+      if (sess && sess.exam_period_id === periodId) {
+        r.result_status = status;
+        if (status === 'PUBLISHED') {
+          r.published_at = new Date().toISOString();
+        } else if (status === 'FINAL') {
+          r.finalized_at = new Date().toISOString();
+        }
+        r.updated_at = new Date().toISOString();
+        count++;
+      }
+    });
+
+    writeDb(db);
+    res.json({ success: true, count, message: `Uspješno promijenjen status rezultata u ${status} za ${count} ispita.` });
+  });
+
+  // Get edit history of a result
+  app.get("/api/matura/results-history/:resultId", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    const history = db.exam_result_history.filter((h: any) => h.exam_result_id === req.params.resultId);
+    res.json(history);
+  });
+
+  // GET accommodations requests list
+  app.get("/api/matura/accommodations", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    const user = (req as any).user;
+
+    let requests = db.accommodation_requests;
+
+    if (user.role === 'SECONDARY_ADMIN' || user.role === 'SECONDARY_HOMEROOM_TEACHER') {
+      let adminSchoolId = 'ext-sch-4';
+      const extStudent = ematicaDb.students.find(s => s.email === user.email);
+      if (extStudent) {
+        adminSchoolId = extStudent.schoolId;
+      }
+      requests = requests.filter((r: any) => r.school_id === adminSchoolId);
+    } else if (user.role === 'SECONDARY_STUDENT') {
+      requests = requests.filter((r: any) => r.student_id === user.id);
+    }
+
+    const enriched = requests.map((r: any) => {
+      let extStudent = ematicaDb.students.find(s => s.id === r.student_id);
+      if (!extStudent && r.student_id === 'stud-ivan') {
+        extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+      }
+
+      const docs = db.accommodation_documents.filter((d: any) => d.request_id === r.id);
+      const decisions = db.accommodation_decisions.filter((d: any) => d.request_id === r.id);
+      const deliveries = db.accommodation_deliveries.filter((d: any) => d.request_id === r.id);
+
+      return {
+        ...r,
+        studentName: extStudent ? `${extStudent.firstName} ${extStudent.lastName}` : 'Nepoznati učenik',
+        studentOib: extStudent ? extStudent.oib : '',
+        classSection: extStudent ? '4.A' : '',
+        documents: docs,
+        decisions,
+        deliveries
+      };
+    });
+
+    res.json(enriched);
+  });
+
+  // POST student creates request
+  app.post("/api/matura/accommodations/request", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    const { student_id, description_requested, requested_measures } = req.body;
+
+    const targetStudentId = student_id || user.id;
+
+    let schoolId = 'ext-sch-4';
+    let extStudent = ematicaDb.students.find(s => s.id === targetStudentId);
+    if (!extStudent && targetStudentId === 'stud-ivan') {
+      extStudent = ematicaDb.students.find(s => s.id === 'ext-ivan');
+    }
+    if (extStudent) {
+      schoolId = extStudent.schoolId;
+    }
+
+    const db = readDb();
+    let existing = db.accommodation_requests.find((r: any) => r.student_id === targetStudentId && r.status !== 'REJECTED');
+
+    if (existing) {
+      if (['SUBMITTED', 'APPROVED', 'DELIVERED'].includes(existing.status)) {
+        return res.status(400).json({ error: "Zahtjev je već predan ili odobren i ne može se mijenjati bez revizije." });
+      }
+      existing.description_requested = description_requested;
+      existing.requested_measures = requested_measures || [];
+      existing.updated_at = new Date().toISOString();
+    } else {
+      existing = {
+        id: `acc-${Date.now()}`,
+        student_id: targetStudentId,
+        school_id: schoolId,
+        status: 'DRAFT',
+        description_requested,
+        requested_measures: requested_measures || [],
+        notes: '',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      db.accommodation_requests.push(existing);
+    }
+
+    writeDb(db);
+    res.json({ success: true, request: existing });
+  });
+
+  // POST upload document for request
+  app.post("/api/matura/accommodations/upload", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    const { requestId, name, size } = req.body;
+
+    if (!requestId || !name) {
+      return res.status(400).json({ error: "Nedostaju ID zahtjeva ili naziv datoteke." });
+    }
+
+    const db = readDb();
+    const reqObj = db.accommodation_requests.find((r: any) => r.id === requestId);
+    if (!reqObj) {
+      return res.status(404).json({ error: "Zahtjev nije pronađen." });
+    }
+
+    const newDoc = {
+      id: `doc-${Date.now()}`,
+      request_id: requestId,
+      file_name: name,
+      file_path: `/private/documents/${requestId}/${name}`,
+      uploaded_by: user.id,
+      uploaded_at: new Date().toISOString(),
+      file_size: size || '1.5 MB'
+    };
+
+    db.accommodation_documents.push(newDoc);
+    writeDb(db);
+
+    res.json({ success: true, document: newDoc });
+  });
+
+  // POST submit request
+  app.post("/api/matura/accommodations/submit", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SECONDARY_ADMIN' && user.role !== 'SECONDARY_HOMEROOM_TEACHER' && user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo ispitni koordinator škole može poslati zahtjev na obradu." });
+    }
+
+    const { requestId, notes } = req.body;
+    if (!requestId) {
+      return res.status(400).json({ error: "Nedostaje ID zahtjeva." });
+    }
+
+    const db = readDb();
+    const reqObj = db.accommodation_requests.find((r: any) => r.id === requestId);
+    if (!reqObj) {
+      return res.status(404).json({ error: "Zahtjev nije pronađen." });
+    }
+
+    const docs = db.accommodation_documents.filter((d: any) => d.request_id === requestId);
+    if (docs.length === 0) {
+      return res.status(400).json({ error: "Zahtjev se ne može poslati bez priložene medicinske ili službene dokumentacije." });
+    }
+
+    reqObj.status = 'SUBMITTED';
+    reqObj.notes = notes || reqObj.notes || '';
+    reqObj.updated_at = new Date().toISOString();
+
+    const history = {
+      id: `acch-${Date.now()}`,
+      request_id: requestId,
+      action: 'SUBMITTED_TO_COMMISSION',
+      performed_by: user.id,
+      notes: notes || 'Poslano od strane ispitnog koordinatora škole.',
+      timestamp: new Date().toISOString()
+    };
+    db.accommodation_history.push(history);
+
+    writeDb(db);
+    res.json({ success: true, request: reqObj });
+  });
+
+  // POST super admin decision
+  app.post("/api/matura/accommodations/decision", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo kupolično nacionalno povjerenstvo može donijeti odluku o prilagodbi." });
+    }
+
+    const { requestId, decisionStatus, approvedMeasures, officialComment, examSubjectIds } = req.body;
+    if (!requestId || !decisionStatus) {
+      return res.status(400).json({ error: "Nedostaju ID zahtjeva ili status odluke." });
+    }
+
+    const db = readDb();
+    const reqObj = db.accommodation_requests.find((r: any) => r.id === requestId);
+    if (!reqObj) {
+      return res.status(404).json({ error: "Zahtjev nije pronađen." });
+    }
+
+    reqObj.status = decisionStatus;
+    reqObj.updated_at = new Date().toISOString();
+
+    const decision = {
+      id: `dec-${Date.now()}`,
+      request_id: requestId,
+      decision_status: decisionStatus,
+      approved_measures: approvedMeasures || [],
+      official_comment: officialComment || '',
+      decided_by: user.id,
+      decided_at: new Date().toISOString()
+    };
+    db.accommodation_decisions.push(decision);
+
+    if (decisionStatus === 'APPROVED' && approvedMeasures && examSubjectIds) {
+      examSubjectIds.forEach((subjId: string) => {
+        approvedMeasures.forEach((measureCode: string) => {
+          db.accommodation_measure_exams.push({
+            id: `me-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+            request_id: requestId,
+            subject_id: subjId,
+            measure_code: measureCode,
+            created_at: new Date().toISOString()
+          });
+        });
+      });
+    }
+
+    const history = {
+      id: `acch-${Date.now()}`,
+      request_id: requestId,
+      action: decisionStatus === 'APPROVED' ? 'APPROVED' : 'REJECTED',
+      performed_by: user.id,
+      notes: officialComment || 'Donesena službena odluka o prilagodbi ispitne tehnologije.',
+      timestamp: new Date().toISOString()
+    };
+    db.accommodation_history.push(history);
+
+    writeDb(db);
+    res.json({ success: true, request: reqObj, decision });
+  });
+
+  // POST deliver decision to student
+  app.post("/api/matura/accommodations/deliver", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const user = (req as any).user;
+    if (user.role !== 'SECONDARY_ADMIN' && user.role !== 'SECONDARY_HOMEROOM_TEACHER' && user.role !== 'SUPER_ADMIN') {
+      return res.status(403).json({ error: "Samo ispitni koordinator škole može potvrditi uručenje rješenja." });
+    }
+
+    const { requestId, deliveryMethod } = req.body;
+    if (!requestId) {
+      return res.status(400).json({ error: "Nedostaje ID zahtjeva." });
+    }
+
+    const db = readDb();
+    const reqObj = db.accommodation_requests.find((r: any) => r.id === requestId);
+    if (!reqObj) {
+      return res.status(404).json({ error: "Zahtjev nije pronađen." });
+    }
+
+    reqObj.status = 'DELIVERED';
+    reqObj.updated_at = new Date().toISOString();
+
+    const delivery = {
+      id: `del-${Date.now()}`,
+      request_id: requestId,
+      delivered_by: user.id,
+      delivered_at: new Date().toISOString(),
+      delivery_method: deliveryMethod || 'IN_PERSON',
+      student_notified: true
+    };
+    db.accommodation_deliveries.push(delivery);
+
+    const history = {
+      id: `acch-${Date.now()}`,
+      request_id: requestId,
+      action: 'DELIVERED_TO_STUDENT',
+      performed_by: user.id,
+      notes: `Službeno rješenje o prilagodbi uručeno učeniku (Metoda: ${deliveryMethod || 'Osobno'}).`,
+      timestamp: new Date().toISOString()
+    };
+    db.accommodation_history.push(history);
+
+    writeDb(db);
+    res.json({ success: true, request: reqObj, delivery });
+  });
+
+  // GET history logs for accommodation
+  app.get("/api/matura/accommodations/history/:id", requireSession(['FACULTY_ADMISSIONS']), (req, res) => {
+    const db = readDb();
+    const history = db.accommodation_history.filter((h: any) => h.request_id === req.params.id);
+    res.json(history);
   });
 
   // Vite middleware for development

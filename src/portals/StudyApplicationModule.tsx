@@ -15,6 +15,7 @@ interface StudyApplicationModuleProps {
   setUnivChoices: (choices: UniversityApplicationChoice[]) => void;
   examResults: ExamResult[];
   examPeriods: ExamPeriod[];
+  examRegistrations: ExamRegistration[];
 }
 
 export function StudyApplicationModule({
@@ -27,7 +28,8 @@ export function StudyApplicationModule({
   univChoices,
   setUnivChoices,
   examResults,
-  examPeriods
+  examPeriods,
+  examRegistrations
 }: StudyApplicationModuleProps) {
   const { logRbacAction } = useRbac();
   const [searchQuery, setSearchQuery] = React.useState('');
@@ -36,7 +38,6 @@ export function StudyApplicationModule({
   const itemsPerPage = 4;
 
   const examSubjects = React.useMemo(() => getTable<ExamSubject>('exam_subjects'), []);
-  const examRegistrations = React.useMemo(() => getTable<ExamRegistration>('exam_registrations'), []);
 
   const studentChoices = React.useMemo(() => {
     return univChoices

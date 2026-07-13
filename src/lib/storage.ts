@@ -59,6 +59,20 @@ function setStored<T>(key: string, value: T): void {
 
 // Ensure database keys exist
 export function initDatabase() {
+  // Safe migration to wipe mock exam data
+  const existingRegs = localStorage.getItem('eduportal_exam_registrations');
+  if (existingRegs && (existingRegs.includes('reg-1') || existingRegs.includes('stud-ivan'))) {
+    localStorage.removeItem('eduportal_exam_registrations');
+  }
+  const existingResults = localStorage.getItem('eduportal_exam_results');
+  if (existingResults && (existingResults.includes('res-1') || existingResults.includes('stud-ivan'))) {
+    localStorage.removeItem('eduportal_exam_results');
+  }
+  const existingPeriods = localStorage.getItem('eduportal_exam_periods');
+  if (existingPeriods && existingPeriods.includes('ep-1')) {
+    localStorage.removeItem('eduportal_exam_periods');
+  }
+
   getStored<User[]>('users', INITIAL_USERS);
   getStored<County[]>('counties', COUNTIES);
   getStored<City[]>('cities', CITIES);
@@ -147,23 +161,10 @@ export function initDatabase() {
   getStored<UniversityApplicationChoice[]>('university_application_choices', defaultUnivChoices);
 
   // Seed Exam Registrations
-  const defaultExamRegs: ExamRegistration[] = [
-    { id: 'reg-1', studentId: 'stud-ivan', examPeriodId: 'ep-1', registeredAt: '2026-02-10T11:00:00Z', status: 'REGISTERED' }, // HRV A
-    { id: 'reg-2', studentId: 'stud-ivan', examPeriodId: 'ep-3', registeredAt: '2026-02-10T11:05:00Z', status: 'REGISTERED' }, // MAT A
-    { id: 'reg-3', studentId: 'stud-ivan', examPeriodId: 'ep-5', registeredAt: '2026-02-10T11:10:00Z', status: 'REGISTERED' }, // ENG A
-    { id: 'reg-4', studentId: 'stud-ivan', examPeriodId: 'ep-7', registeredAt: '2026-02-12T15:00:00Z', status: 'REGISTERED' }, // FIZ N/A
-    { id: 'reg-5', studentId: 'stud-ivan', examPeriodId: 'ep-8', registeredAt: '2026-02-12T15:10:00Z', status: 'REGISTERED' }  // INF N/A
-  ];
-  getStored<ExamRegistration[]>('exam_registrations', defaultExamRegs);
+  getStored<ExamRegistration[]>('exam_registrations', []);
 
   // Seed Exam Results
-  const defaultExamResults: ExamResult[] = [
-    { id: 'res-1', studentId: 'stud-ivan', examPeriodId: 'ep-1', scorePercentage: 88, grade: 5, pointsEarned: 176 }, // HRV A (max 200)
-    { id: 'res-2', studentId: 'stud-ivan', examPeriodId: 'ep-3', scorePercentage: 92, grade: 5, pointsEarned: 368 }, // MAT A (max 400)
-    { id: 'res-3', studentId: 'stud-ivan', examPeriodId: 'ep-5', scorePercentage: 85, grade: 4, pointsEarned: 127.5 }, // ENG A (max 150)
-    { id: 'res-4', studentId: 'stud-ivan', examPeriodId: 'ep-7', scorePercentage: 90, grade: 5, pointsEarned: 225 } // FIZ N/A (max 250)
-  ];
-  getStored<ExamResult[]>('exam_results', defaultExamResults);
+  getStored<ExamResult[]>('exam_results', []);
 
   // Seed Documents
   const defaultDocs: AppDocument[] = [
@@ -211,10 +212,7 @@ export function initDatabase() {
 export function getCurrentUser(): User | null {
   const user = localStorage.getItem('eduportal_current_user');
   if (!user) {
-    // Default to SUPER_ADMIN for initial easy load
-    const defaultUser = INITIAL_USERS[0];
-    localStorage.setItem('eduportal_current_user', JSON.stringify(defaultUser));
-    return defaultUser;
+    return null;
   }
   return JSON.parse(user);
 }

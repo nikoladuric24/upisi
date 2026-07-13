@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { User } from '../types';
 import { INITIAL_USERS } from '../data/mockData';
 import { Shield, BookOpen, GraduationCap, School, Key, ArrowRight } from 'lucide-react';
+import { usePortal } from './PortalContext';
 
 interface AuthScreenProps {
   onLogin: (user: User) => void;
@@ -17,33 +18,74 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [showTestAccounts, setShowTestAccounts] = useState(true);
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const { config, portalType, setPortalTypeOverride, isDevMode } = usePortal();
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!email) {
       setError('Molimo unesite e-mail adresu.');
       return;
     }
 
-    const foundUser = INITIAL_USERS.find(
-      u => u.email.toLowerCase().trim() === email.toLowerCase().trim()
-    );
+    setLoading(true);
+    setError('');
 
-    if (foundUser) {
-      onLogin(foundUser);
-    } else {
-      setError('Korisnik s ovim e-mailom nije pronađen u EduPortal bazi.');
+    try {
+      const response = await fetch('/api/shared/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setError(data.error || 'Prijava nije uspjela.');
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      onLogin(data.user);
+    } catch (err: any) {
+      setError('Pogreška prilikom povezivanja s poslužiteljem.');
+      setLoading(false);
     }
   };
 
-  const handleTestLogin = (user: User) => {
+  const handleTestLogin = async (user: User) => {
     setEmail(user.email);
     setPassword('••••••••');
     setError('');
-    // Slight delay for animation effect
-    setTimeout(() => {
-      onLogin(user);
-    }, 400);
+    setLoading(true);
+    
+    try {
+      const response = await fetch('/api/shared/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email: user.email }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json();
+        setError(data.error || 'Prijava nije uspjela.');
+        setLoading(false);
+        return;
+      }
+
+      const data = await response.json();
+      setTimeout(() => {
+        onLogin(data.user);
+      }, 300);
+    } catch (err: any) {
+      setError('Pogreška prilikom povezivanja s poslužiteljem.');
+      setLoading(false);
+    }
   };
 
   const getRoleBadge = (role: string) => {
@@ -69,15 +111,60 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     }
   };
 
+  // Filter accounts allowed on this portal
+  const filteredUsers = INITIAL_USERS.filter(u => config.allowedRoles.includes(u.role));
+
+  const brandGradient = config.portalType === 'FACULTY_ADMISSIONS'
+    ? 'from-indigo-700 to-indigo-900 dark:from-indigo-950 dark:to-slate-900'
+    : 'from-emerald-700 to-emerald-900 dark:from-emerald-950 dark:to-slate-900';
+
+  const buttonColor = config.portalType === 'FACULTY_ADMISSIONS'
+    ? 'bg-indigo-600 hover:bg-indigo-700 shadow-indigo-600/10 hover:shadow-indigo-600/20'
+    : 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/10 hover:shadow-emerald-600/20';
+
   return (
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 flex flex-col items-center justify-center p-4 transition-colors duration-300">
+      
+      {/* Dev Mode Domain Switcher Banner */}
+      {isDevMode && (
+        <div className="w-full max-w-6xl mb-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-xs">
+          <div className="flex items-center gap-2">
+            <span className="flex h-2 w-2 rounded-full bg-amber-500 animate-pulse" />
+            <span className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+              [DEVELOPMENT SWITCHER] Odaberite domenu / portal za testiranje:
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPortalTypeOverride('FACULTY_ADMISSIONS')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                portalType === 'FACULTY_ADMISSIONS'
+                  ? 'bg-indigo-600 text-white shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+              }`}
+            >
+              Postani student (Državna Matura)
+            </button>
+            <button
+              onClick={() => setPortalTypeOverride('SECONDARY_ADMISSIONS')}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                portalType === 'SECONDARY_ADMISSIONS'
+                  ? 'bg-emerald-600 text-white shadow-xs'
+                  : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200'
+              }`}
+            >
+              e-Srednja (Upis Srednje)
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="w-full max-w-6xl grid grid-cols-1 md:grid-cols-12 gap-8 items-stretch">
         
         {/* Left Side: Brand & Concept */}
-        <div className="md:col-span-5 flex flex-col justify-between p-8 bg-linear-to-br from-indigo-700 to-indigo-900 dark:from-indigo-950 dark:to-slate-900 text-white rounded-3xl shadow-xl relative overflow-hidden">
-          {/* Decorative circles */}
+        <div className={`md:col-span-5 flex flex-col justify-between p-8 bg-gradient-to-br ${brandGradient} text-white rounded-3xl shadow-xl relative overflow-hidden`}>
           <div className="absolute -top-12 -right-12 w-48 h-48 bg-white/5 rounded-full blur-2xl" />
-          <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-indigo-500/10 rounded-full blur-3xl" />
+          <div className="absolute -bottom-20 -left-20 w-80 h-80 bg-white/5 rounded-full blur-3xl" />
           
           <div className="relative">
             <div className="flex items-center gap-3 mb-6">
@@ -85,39 +172,27 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                 <GraduationCap className="h-8 w-8 text-amber-400" />
               </div>
               <div>
-                <h1 className="text-2xl font-bold tracking-tight">EduPortal</h1>
-                <p className="text-xs text-indigo-200">Republika Hrvatska</p>
+                <h1 className="text-2xl font-bold tracking-tight">{config.shortName}</h1>
+                <p className="text-xs text-white/70">Republika Hrvatska</p>
               </div>
             </div>
 
-            <div className="space-y-6 my-8">
+            <div className="space-y-6 my-8 animate-fade-in">
               <h2 className="text-3xl font-extrabold tracking-tight leading-tight">
-                Jedinstveni sustav za upise i maturu
+                {config.name}
               </h2>
-              <p className="text-indigo-100/90 leading-relaxed text-sm">
-                EduPortal Hrvatska objedinjuje i modernizira procese upisa u osnovne i srednje škole, 
-                polaganje državne mature te prijavu studijskih programa na visokim učilištima.
+              <p className="text-white/80 leading-relaxed text-sm">
+                {config.description}. Pristup zaštićenim dijelovima sustava zahtijeva izričitu AAI@EduHr prijavu.
               </p>
             </div>
           </div>
 
           <div className="relative mt-auto border-t border-white/10 pt-6 space-y-4">
-            <div className="flex items-center gap-3 text-xs text-indigo-200">
+            <div className="flex items-center gap-3 text-xs text-white/70">
               <div className="p-1 bg-amber-400/20 text-amber-400 rounded-md">
                 <Shield className="h-4 w-4" />
               </div>
-              <span>Sustav podliježe NIAS sigurnosnim standardima</span>
-            </div>
-            
-            <div className="grid grid-cols-2 gap-3 text-center text-xs">
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <p className="text-amber-400 font-bold text-lg">srednje.e-upisi</p>
-                <p className="text-indigo-200 text-[10px]">Srednjoškolski modul</p>
-              </div>
-              <div className="p-3 bg-white/5 rounded-xl border border-white/5">
-                <p className="text-amber-400 font-bold text-lg">Postani Student</p>
-                <p className="text-indigo-200 text-[10px]">Visokoškolski modul</p>
-              </div>
+              <span>Sustav podliježe NIAS i CARNET sigurnosnim standardima</span>
             </div>
           </div>
         </div>
@@ -129,7 +204,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
             <div className="mb-6">
               <h3 className="text-2xl font-bold text-slate-800 dark:text-slate-100">Pristup portalu</h3>
               <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
-                Prijavite se koristeći elektronički identitet iz sustava AAI@EduHr ili registrirani e-mail.
+                Prijavite se koristeći elektronički identitet iz sustava AAI@EduHr.
               </p>
             </div>
 
@@ -153,6 +228,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                     value={email}
                     onChange={e => setEmail(e.target.value)}
                     placeholder="ime.prezime@skole.hr"
+                    disabled={loading}
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
                 </div>
@@ -171,6 +247,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                     value={password}
                     onChange={e => setPassword(e.target.value)}
                     placeholder="••••••••"
+                    disabled={loading}
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
                 </div>
@@ -178,9 +255,10 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
               <button
                 type="submit"
-                className="w-full mt-2 py-3.5 px-6 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-2xl shadow-lg shadow-indigo-600/10 hover:shadow-indigo-600/20 active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer"
+                disabled={loading}
+                className={`w-full mt-2 py-3.5 px-6 text-white font-semibold rounded-2xl shadow-lg active:scale-[0.98] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 ${buttonColor}`}
               >
-                Prijavi se u sustav <ArrowRight className="h-4 w-4" />
+                {loading ? 'Povezivanje...' : 'Prijavi se u sustav'} <ArrowRight className="h-4 w-4" />
               </button>
             </form>
           </div>
@@ -189,9 +267,9 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
           {showTestAccounts && (
             <div className="p-6 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between mb-4 border-b border-slate-100 dark:border-slate-800 pb-3">
-                <h4 className="text-sm font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-2">
+                <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-2">
                   <Shield className="h-4 w-4 text-indigo-500" />
-                  BRZI TESTNI PRISTUP (SIMULATOR ULOGA)
+                  BRZI TESTNI PRISTUP ({config.shortName.toUpperCase()})
                 </h4>
                 <button
                   onClick={() => setShowTestAccounts(false)}
@@ -202,18 +280,18 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
               </div>
 
               <p className="text-xs text-slate-500 dark:text-slate-400 mb-4 leading-relaxed">
-                Prijavite se trenutno s bilo kojom od predefiniranih sigurnosnih uloga (RBAC) u Hrvatskoj. 
-                Sustav će automatski učitati ulogu, identificirati školu ili fakultet i dodijeliti točne ovlasti.
+                Prijavite se s ulogom koja je dozvoljena za portal <strong>{config.shortName}</strong>:
               </p>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5 max-h-56 overflow-y-auto pr-1">
-                {INITIAL_USERS.map(user => {
+                {filteredUsers.map(user => {
                   const badge = getRoleBadge(user.role);
                   return (
                     <button
                       key={user.id}
                       onClick={() => handleTestLogin(user)}
-                      className="flex flex-col text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40 hover:bg-indigo-50/60 dark:hover:bg-indigo-950/20 border border-slate-100 dark:border-slate-800 hover:border-indigo-200 dark:hover:border-indigo-900 transition-all cursor-pointer group"
+                      disabled={loading}
+                      className="flex flex-col text-left p-3 rounded-2xl bg-slate-50 dark:bg-slate-800/40 hover:bg-slate-100 dark:hover:bg-slate-800/80 border border-slate-100 dark:border-slate-800 hover:border-slate-200 transition-all cursor-pointer group disabled:opacity-50"
                     >
                       <div className="flex items-center justify-between w-full gap-2 mb-1">
                         <span className="font-bold text-xs text-slate-700 dark:text-slate-200 group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors truncate">

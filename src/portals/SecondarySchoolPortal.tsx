@@ -114,6 +114,104 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
     }
   }, [activeTabOverride]);
 
+  // Synchronize database state with persistent backend endpoints
+  React.useEffect(() => {
+    const fetchMaturaBackendData = async () => {
+      try {
+        // 1. Fetch real sessions and map to examPeriods
+        const resSessions = await fetch('/api/matura/sessions');
+        if (resSessions.ok) {
+          const sessionsData = await resSessions.json();
+          const mappedPeriods = sessionsData.map((s: any) => ({
+            id: s.id,
+            name: `Ispit - ${s.subject_id} (${s.level})`,
+            subjectId: s.subject_id,
+            academicYear: '2026./2027.',
+            level: s.level,
+            date: s.exam_date,
+            time: s.start_time,
+            durationMinutes: s.duration_minutes,
+            isRegistrationOpen: s.status === 'ACTIVE'
+          }));
+          setExamPeriods(mappedPeriods);
+        }
+
+        // 2. Fetch registrations and results based on user role
+        if (isTeacherOrAdmin) {
+          const resRegs = await fetch('/api/matura/registrations-admin');
+          if (resRegs.ok) {
+            const regsData = await resRegs.json();
+            const mappedRegs = regsData.map((r: any) => ({
+              id: r.id,
+              studentId: r.student_id,
+              examPeriodId: r.exam_session_id,
+              registeredAt: r.registered_at,
+              status: r.registration_status === 'REGISTERED' ? 'REGISTERED' as const : 'CANCELLED' as const,
+              _subjectName: r.subjectName,
+              _level: r.level
+            }));
+            setExamRegistrations(mappedRegs);
+          }
+
+          const resResults = await fetch('/api/matura/results-admin');
+          if (resResults.ok) {
+            const resultsData = await resResults.json();
+            const mappedResults = resultsData.map((r: any) => ({
+              id: r.id,
+              studentId: r.student_id || r.studentId,
+              examPeriodId: r.examPeriodId,
+              pointsEarned: r.points_earned,
+              maximumPoints: r.maximum_points,
+              scorePercentage: r.percentage,
+              grade: r.grade,
+              outcome: r.outcome,
+              status: r.result_status,
+              _subjectName: r.subjectName
+            }));
+            setExamResults(mappedResults);
+          }
+        } else if (isStudent && currentStudent) {
+          const resRegs = await fetch(`/api/matura/registrations?studentId=${currentStudent.id}`);
+          if (resRegs.ok) {
+            const regsData = await resRegs.json();
+            const mappedRegs = regsData.map((r: any) => ({
+              id: r.id,
+              studentId: r.studentId,
+              examPeriodId: r.examSessionId,
+              registeredAt: r.registeredAt,
+              status: r.status === 'REGISTERED' ? 'REGISTERED' as const : 'CANCELLED' as const,
+              _subjectName: r.subject?.officialName,
+              _level: r.level
+            }));
+            setExamRegistrations(mappedRegs);
+          }
+
+          const resResults = await fetch(`/api/matura/results?studentId=${currentStudent.id}`);
+          if (resResults.ok) {
+            const resultsData = await resResults.json();
+            const mappedResults = resultsData.map((r: any) => ({
+              id: r.id,
+              studentId: r.studentId,
+              examPeriodId: r.examRegistrationId,
+              pointsEarned: r.pointsEarned,
+              maximumPoints: r.maximumPoints,
+              scorePercentage: r.scorePercentage,
+              grade: r.grade,
+              outcome: r.outcome,
+              status: r.resultStatus,
+              _subjectName: r.subject?.officialName
+            }));
+            setExamResults(mappedResults);
+          }
+        }
+      } catch (err) {
+        console.error("Greška pri sinkronizaciji podataka s backendom mature:", err);
+      }
+    };
+
+    fetchMaturaBackendData();
+  }, [isTeacherOrAdmin, isStudent, currentStudent?.id]);
+
   // Dynamic tab switcher to prevent showing unauthorized tab
   React.useEffect(() => {
     if (!session) return;
@@ -530,6 +628,7 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
             examRegistrations={examRegistrations}
             setExamRegistrations={setExamRegistrations}
             examResults={examResults}
+            setExamResults={setExamResults}
           />
         )}
 
@@ -546,6 +645,7 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
             setUnivChoices={setUnivChoices}
             examResults={examResults}
             examPeriods={examPeriods}
+            examRegistrations={examRegistrations}
           />
         )}
 
@@ -730,9 +830,11 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
                           {regs.map(r => {
                             const p = examPeriods.find(ep => ep.id === r.examPeriodId);
                             const s = examSubjects.find(sub => sub.id === p?.subjectId);
+                            const name = s?.name || (r as any)._subjectName;
+                            const lvl = p?.level || (r as any)._level;
                             return (
                               <p key={r.id} className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                                • {s?.name} ({p?.level !== 'N/A' ? `Razina ${p?.level}` : 'Izborni'})
+                                • {name} ({lvl && lvl !== 'N/A' && lvl !== 'SINGLE' ? `Razina ${lvl}` : 'Izborni'})
                               </p>
                             );
                           })}
@@ -745,9 +847,10 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
                           {examResults.filter(res => res.studentId === stud.id).map(res => {
                             const p = examPeriods.find(ep => ep.id === res.examPeriodId);
                             const s = examSubjects.find(sub => sub.id === p?.subjectId);
+                            const name = s?.name || (res as any)._subjectName;
                             return (
                               <p key={res.id} className="text-[10px] flex justify-between text-slate-700 dark:text-slate-300">
-                                <span>{s?.name}:</span>
+                                <span>{name}:</span>
                                 <span className="font-bold">Ocjena {res.grade} ({res.scorePercentage}%) - {res.pointsEarned}b</span>
                               </p>
                             );

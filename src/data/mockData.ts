@@ -96,22 +96,7 @@ export const EXAM_SUBJECTS: ExamSubject[] = [
   { id: 'ex-sub-7', name: 'Biologija', isElective: true }
 ];
 
-export const EXAM_PERIODS: ExamPeriod[] = [
-  // Ljetni rok 2026
-  { id: 'ep-1', subjectId: 'ex-sub-1', level: 'A', date: '2026-06-15', time: '09:00', durationMinutes: 180 },
-  { id: 'ep-2', subjectId: 'ex-sub-1', level: 'B', date: '2026-06-15', time: '09:00', durationMinutes: 150 },
-  
-  { id: 'ep-3', subjectId: 'ex-sub-2', level: 'A', date: '2026-06-17', time: '09:00', durationMinutes: 180 },
-  { id: 'ep-4', subjectId: 'ex-sub-2', level: 'B', date: '2026-06-17', time: '09:00', durationMinutes: 150 },
-  
-  { id: 'ep-5', subjectId: 'ex-sub-3', level: 'A', date: '2026-06-19', time: '09:00', durationMinutes: 180 },
-  { id: 'ep-6', subjectId: 'ex-sub-3', level: 'B', date: '2026-06-19', time: '09:00', durationMinutes: 120 },
-  
-  { id: 'ep-7', subjectId: 'ex-sub-4', level: 'N/A', date: '2026-06-22', time: '09:00', durationMinutes: 180 }, // Fizika
-  { id: 'ep-8', subjectId: 'ex-sub-5', level: 'N/A', date: '2026-06-23', time: '14:00', durationMinutes: 150 }, // Informatika
-  { id: 'ep-9', subjectId: 'ex-sub-6', level: 'N/A', date: '2026-06-24', time: '09:00', durationMinutes: 180 }, // Kemija
-  { id: 'ep-10', subjectId: 'ex-sub-7', level: 'N/A', date: '2026-06-25', time: '09:00', durationMinutes: 150 } // Biologija
-];
+export const EXAM_PERIODS: ExamPeriod[] = [];
 
 export const STUDY_PROGRAMS: StudyProgram[] = [
   // FER (fac-1)
