@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User } from '../types';
 import { Session, createSessionForUser, checkPermission, Permission, logSecurityAudit } from '../lib/rbac';
 import { ShieldAlert, Lock } from 'lucide-react';
@@ -41,10 +41,13 @@ export function RbacProvider({ children, currentUser, onLogout }: {
     }
   }, [currentUser]);
 
-  const hasPermission = (permission: Permission, resourceContext?: any) => {
-    if (!session) return false;
-    return checkPermission(session, permission, resourceContext);
-  };
+  const hasPermission = useCallback(
+    (permission: Permission, resourceContext?: any) => {
+      if (!session) return false;
+      return checkPermission(session, permission, resourceContext);
+    },
+    [session]
+  );
 
   const logRbacAction = (
     action: string,

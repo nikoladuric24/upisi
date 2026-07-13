@@ -128,7 +128,8 @@ export const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   SECONDARY_STUDENT: [
     'students.read', 'students.update',
-    'matura.read', 'matura.register', 'matura.unregister',
+    'matura.read', 'matura.register', 'matura.unregister', 'matura.results',
+    'universities.read', 'study_programs.read',
     'applications.read', 'applications.update',
     'documents.read'
   ]

@@ -296,3 +296,78 @@ export interface PrimaryPointsConfig {
   maxPoints: number; // Total max points (default 80)
 }
 
+// ==========================================
+// INTEGRACIJA E-MATICA - INTERFACI ZA BAZU
+// ==========================================
+
+export interface IntegrationConnection {
+  id: string;
+  sourceSystem: string; // e.g. "e-Matica"
+  baseUrl: string;
+  clientId: string;
+  status: 'CONNECTED' | 'DISCONNECTED' | 'ERROR';
+  lastSuccessfulSyncAt?: string;
+  lastFailedSyncAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface IntegrationSyncRun {
+  id: string;
+  sourceSystem: string;
+  syncType: 'FULL' | 'INCREMENTAL' | 'MANUAL_STUDENT' | 'MANUAL_SCHOOL';
+  startedAt: string;
+  finishedAt: string;
+  status: 'SUCCESS' | 'FAILED' | 'WARNING';
+  requestedBy: string;
+  recordsReceived: number;
+  recordsCreated: number;
+  recordsUpdated: number;
+  recordsSkipped: number;
+  recordsFailed: number;
+  errorSummary?: string;
+  cursorBefore?: string;
+  cursorAfter?: string;
+}
+
+export interface IntegrationSyncError {
+  id: string;
+  syncRunId: string;
+  entityType: string; // "SCHOOL" | "PROGRAM" | "STUDENT" | "GRADE"
+  externalEntityId: string;
+  errorCode: string;
+  errorMessage: string;
+  rawReference?: string;
+  retryCount: number;
+  resolvedAt?: string;
+  resolvedBy?: string;
+}
+
+export interface StudentExternalLink {
+  id: string;
+  studentId: string;
+  sourceSystem: string;
+  externalStudentId: string;
+  externalSchoolId: string;
+  externalProgramId: string;
+  firstSyncedAt: string;
+  lastSyncedAt: string;
+  sourceRecordVersion: string;
+  syncStatus: 'SYNCED' | 'ERROR' | 'UNLINKED';
+}
+
+export interface IntegrationEvent {
+  id: string;
+  sourceSystem: string;
+  externalEventId: string;
+  eventType: string; // e.g. "student.updated", "grade.finalized"
+  entityType: string;
+  externalEntityId: string;
+  receivedAt: string;
+  processedAt?: string;
+  status: 'PENDING' | 'PROCESSED' | 'FAILED' | 'SKIPPED';
+  errorMessage?: string;
+  retryCount: number;
+}
+
+

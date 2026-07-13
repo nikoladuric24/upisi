@@ -28,11 +28,13 @@ import { runAutomaticWorkflowTick } from '../lib/workflow';
 import { DatabaseExplorer } from '../components/DatabaseExplorer';
 import { InstitutionProgramsView } from '../components/InstitutionProgramsView';
 import { FacultyProgramsView } from '../components/FacultyProgramsView';
+import { EMaticaIntegrationView } from '../components/EMaticaIntegrationView';
 import {
   Shield,
   School as SchoolIcon,
   GraduationCap,
   Users,
+  Activity,
   Calendar,
   Layers,
   Search,
@@ -63,16 +65,16 @@ interface SuperAdminPortalProps {
 
 export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminPortalProps) {
   const { hasPermission, logRbacAction } = useRbac();
-  const [activeTab, setActiveTab] = useState<'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza'>(() => {
+  const [activeTab, setActiveTab] = useState<'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza' | 'ematica'>(() => {
     const params = new URLSearchParams(window.location.search);
     const tabFromUrl = params.get('tab');
-    if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza'].includes(tabFromUrl)) {
+    if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza', 'ematica'].includes(tabFromUrl)) {
       return tabFromUrl as any;
     }
     return 'stats';
   });
   
-  const handleTabChange = (tab: 'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza') => {
+  const handleTabChange = (tab: 'stats' | 'schools' | 'universities' | 'deadlines' | 'users' | 'postavke' | 'audit' | 'baza' | 'ematica') => {
     setActiveTab(tab);
     const url = new URL(window.location.href);
     url.searchParams.set('tab', tab);
@@ -83,7 +85,7 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
     const handlePopState = () => {
       const params = new URLSearchParams(window.location.search);
       const tabFromUrl = params.get('tab');
-      if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza'].includes(tabFromUrl)) {
+      if (tabFromUrl && ['stats', 'schools', 'universities', 'deadlines', 'users', 'postavke', 'audit', 'baza', 'ematica'].includes(tabFromUrl)) {
         setActiveTab(tabFromUrl as any);
       }
     };
@@ -436,6 +438,7 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
           { id: 'users', label: 'Korisnici i uloge', icon: Users },
           { id: 'postavke', label: 'Postavke i formule', icon: Shield },
           { id: 'audit', label: 'Sigurnosni Audit Log', icon: FileText },
+          { id: 'ematica', label: 'Integracija e-Matica', icon: Activity },
           { id: 'baza', label: 'PostgreSQL & Supabase', icon: Database }
         ].map(tab => {
           const Icon = tab.icon;
@@ -1415,6 +1418,19 @@ export function SuperAdminPortal({ currentUser, activeTabOverride }: SuperAdminP
         {/* DATABASE EXPLORER TAB */}
         {activeTab === 'baza' && (
           <DatabaseExplorer currentUser={currentUser} />
+        )}
+
+        {/* EMATICA INTEGRATION TAB */}
+        {activeTab === 'ematica' && (
+          <EMaticaIntegrationView 
+            currentUser={currentUser} 
+            onRefreshData={() => {
+              setSchools(getTable<School>('schools'));
+              setSchoolPrograms(getTable<SchoolProgram>('school_programs'));
+              setUsers(getTable<User>('users'));
+              setAuditLogs(getTable<AuditLog>('audit_logs'));
+            }}
+          />
         )}
       </div>
     </div>

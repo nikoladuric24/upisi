@@ -146,7 +146,7 @@ export function Sidebar({
         },
         {
           id: 'dashboard-izbori',
-          portalTab: 'izbori',
+          portalTab: 'prioriteti',
           label: 'Prioriteti studija',
           icon: <ListOrdered className="h-4.5 w-4.5 shrink-0" />,
           roles: ['SECONDARY_STUDENT']
@@ -298,9 +298,12 @@ export function Sidebar({
                 {visibleItems.map((item) => {
                   const isPortalPage = item.id.startsWith('dashboard-');
                   const targetPageId = isPortalPage ? 'dashboard' : item.id;
+                  
+                  const currentPortalTab =
+                    new URLSearchParams(window.location.search).get('tab');
                   const isActive =
                     activePage === targetPageId &&
-                    (!isPortalPage || window.location.hash.includes(item.portalTab)); // hash/tab sync if needed
+                    (!isPortalPage || currentPortalTab === item.portalTab);
 
                   return (
                     <button type="button"

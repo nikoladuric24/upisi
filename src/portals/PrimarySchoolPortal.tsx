@@ -103,15 +103,15 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
   React.useEffect(() => {
     const allowedTabs: string[] = [];
     if (hasPermission('schools.read')) allowedTabs.push('pretraga');
-    if (hasPermission('applications.update')) allowedTabs.push('zelje');
+    if (hasPermission('applications.read')) allowedTabs.push('zelje');
     if (hasPermission('grades.read')) allowedTabs.push('bodovi');
     if (hasPermission('documents.read')) allowedTabs.push('dokumenti');
-    if (hasPermission('students.read')) allowedTabs.push('verifikacija');
+    if (isTeacherOrAdmin && hasPermission('students.read')) allowedTabs.push('verifikacija');
 
     if (!allowedTabs.includes(activeTab) && allowedTabs.length > 0) {
       handleTabChange(allowedTabs[0]);
     }
-  }, [session, activeTab, hasPermission]);
+  }, [session, activeTab, hasPermission, isTeacherOrAdmin]);
 
   // Search filter states
   const [searchTerm, setSearchTerm] = useState('');
@@ -139,7 +139,7 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
   const filteredPrograms = schoolPrograms.filter(p => {
     const parentSchool = schools.find(s => s.id === p.schoolId);
     // Ensure parent school is active and not archived
-    if (!parentSchool || parentSchool.type !== 'SECONDARY' || parentSchool.isArchived || !parentSchool.isActive) return false;
+    if (!parentSchool || parentSchool.type !== 'SECONDARY' || parentSchool.isArchived === true || parentSchool.isActive === false) return false;
     
     // Students only see published and active programs
     if (isStudent && (p.isPublished === false || p.isActive === false)) return false;
