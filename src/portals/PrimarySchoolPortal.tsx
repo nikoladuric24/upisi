@@ -117,6 +117,8 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedCity, setSelectedCity] = useState('');
   const [selectedType, setSelectedType] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 6;
 
   // Document upload state
   const [uploadPurpose, setUploadPurpose] = useState<'ZDRAVSTVENA_POTVRDA' | 'DODATNI_BODOVI' | 'OSTALO'>('DODATNI_BODOVI');
@@ -136,7 +138,11 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
   // Filter Secondary Schools Programs
   const filteredPrograms = schoolPrograms.filter(p => {
     const parentSchool = schools.find(s => s.id === p.schoolId);
-    if (!parentSchool || parentSchool.type !== 'SECONDARY') return false;
+    // Ensure parent school is active and not archived
+    if (!parentSchool || parentSchool.type !== 'SECONDARY' || parentSchool.isArchived || !parentSchool.isActive) return false;
+    
+    // Students only see published and active programs
+    if (isStudent && (p.isPublished === false || p.isActive === false)) return false;
     
     const matchesSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
                           parentSchool.name.toLowerCase().includes(searchTerm.toLowerCase());
@@ -144,6 +150,14 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
     const matchesCity = selectedCity ? parentSchool.cityId === selectedCity : true;
     return matchesSearch && matchesCity;
   });
+
+  const paginatedPrograms = filteredPrograms.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.ceil(filteredPrograms.length / itemsPerPage);
+
+  // Reset pagination when filters change
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedCity]);
 
   // Luka's Selected choices list
   const lukaChoices = schoolChoices
@@ -271,6 +285,47 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
     setUploadedFileName('');
     setUploadSuccessMsg('Dokument je uspješno učitan i čeka provjeru administratora/razrednika.');
     setTimeout(() => setUploadSuccessMsg(''), 5000);
+  };
+
+  // Teacher actions: Unlock list
+  const handleUnlockList = async (appId: string) => {
+    const reason = prompt('Unesite razlog za otključavanje liste (min. 10 znakova):');
+    if (!reason || reason.trim().length < 10) {
+      alert('Razlog mora imati barem 10 znakova.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/school-applications/${appId}/unlock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          reason,
+          requestorId: currentUser.id,
+          requestorRole: currentUser.role
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        alert(`Greška: ${data.error}`);
+        return;
+      }
+
+      // Update mock storage directly to keep UI synchronized
+      const updatedApps = schoolApps.map(a => a.id === appId ? { ...a, status: 'DRAFT' as any } : a);
+      setSchoolApps(updatedApps);
+      saveTable('school_applications', updatedApps);
+      
+      const app = schoolApps.find(a => a.id === appId);
+      if (app) {
+        addNotification(app.studentId, 'Prijava otključana', 'Vaša prijava je otključana od strane razrednika. Razlog: ' + reason, 'ALERT');
+      }
+
+      alert(data.message);
+    } catch (err) {
+      alert('Greška pri komunikaciji sa serverom.');
+    }
   };
 
   // Teacher actions: Verify document
@@ -439,53 +494,82 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredPrograms.map(prog => {
-                const school = schools.find(s => s.id === prog.schoolId);
-                const isSelected = lukaChoices.some(c => c.programId === prog.id);
-                return (
-                  <div key={prog.id} className="p-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-900 transition-all">
-                    <div>
-                      <div className="flex justify-between items-start">
-                        <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-sm">
-                          Trajanje: {prog.durationYears} g.
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">Kvota: {prog.quota} učenika</span>
-                      </div>
-                      
-                      <div className="mt-2 space-y-1">
-                        <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100">{prog.name}</h4>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">{school?.name}</p>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] border-t border-slate-100 dark:border-slate-800/50 pt-2.5">
-                        <div>
-                          <p className="text-slate-400 uppercase">Prošlogodišnji prag:</p>
-                          <p className="font-bold text-slate-700 dark:text-slate-200">{prog.prevYearThreshold} bodova</p>
+              {paginatedPrograms.length === 0 ? (
+                <div className="col-span-1 md:col-span-2 text-center py-10 text-slate-500 text-sm">
+                  Nema programa koji odgovaraju odabranim kriterijima.
+                </div>
+              ) : (
+                paginatedPrograms.map(prog => {
+                  const school = schools.find(s => s.id === prog.schoolId);
+                  const isSelected = lukaChoices.some(c => c.programId === prog.id);
+                  return (
+                    <div key={prog.id} className="p-4 bg-slate-50 dark:bg-slate-800/40 border border-slate-100 dark:border-slate-800 rounded-2xl flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-900 transition-all">
+                      <div>
+                        <div className="flex justify-between items-start">
+                          <span className="text-[9px] font-black uppercase text-indigo-600 bg-indigo-50 dark:bg-indigo-950/40 px-2 py-0.5 rounded-sm">
+                            Trajanje: {prog.durationYears} g.
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">Kvota: {prog.quota} učenika</span>
                         </div>
-                        <div>
-                          <p className="text-slate-400 uppercase">Minimalni prag:</p>
-                          <p className="font-bold text-slate-700 dark:text-slate-200">{prog.minPointsThreshold} bodova</p>
+                        
+                        <div className="mt-2 space-y-1">
+                          <h4 className="font-bold text-sm text-slate-800 dark:text-slate-100">{prog.name}</h4>
+                          <p className="text-xs text-slate-500 dark:text-slate-400">{school?.name}</p>
+                        </div>
+                        <div className="mt-4 grid grid-cols-2 gap-2 text-[10px] border-t border-slate-100 dark:border-slate-800/50 pt-2.5">
+                          <div>
+                            <p className="text-slate-400 uppercase">Prošlogodišnji prag:</p>
+                            <p className="font-bold text-slate-700 dark:text-slate-200">{prog.prevYearThreshold} bodova</p>
+                          </div>
+                          <div>
+                            <p className="text-slate-400 uppercase">Minimalni prag:</p>
+                            <p className="font-bold text-slate-700 dark:text-slate-200">{prog.minPointsThreshold} bodova</p>
+                          </div>
                         </div>
                       </div>
+                      <button
+                        onClick={() => handleAddChoice(prog)}
+                        disabled={isSelected || currentApp.status === 'LOCKED'}
+                        className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
+                          isSelected 
+                            ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
+                            : currentApp.status === 'LOCKED'
+                            ? 'bg-slate-50 dark:bg-slate-800 text-slate-300 dark:text-slate-500 cursor-not-allowed'
+                            : 'bg-indigo-600 hover:bg-indigo-700 text-white'
+                        }`}
+                      >
+                        {isSelected ? 'Dodano na listu' : <><Plus className="h-4 w-4" /> Dodaj na listu želja</>}
+                      </button>
                     </div>
-
-                    <button
-                      onClick={() => handleAddChoice(prog)}
-                      disabled={isSelected || currentApp.status === 'LOCKED'}
-                      className={`mt-4 w-full py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                        isSelected 
-                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                          : currentApp.status === 'LOCKED'
-                          ? 'bg-slate-50 dark:bg-slate-800 text-slate-300 dark:text-slate-500 cursor-not-allowed'
-                          : 'bg-indigo-600 hover:bg-indigo-700 text-white'
-                      }`}
-                    >
-                      {isSelected ? 'Dodano na listu' : <><Plus className="h-4 w-4" /> Dodaj na listu želja</>}
-                    </button>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
+
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4 mt-6">
+                <p className="text-xs text-slate-500">Pronađeno: {filteredPrograms.length} programa</p>
+                <div className="flex gap-2">
+                  <button 
+                    disabled={currentPage === 1}
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-50"
+                  >
+                    Prethodna
+                  </button>
+                  <span className="text-xs text-slate-500 flex items-center px-2">
+                    {currentPage} / {totalPages}
+                  </span>
+                  <button 
+                    disabled={currentPage === totalPages}
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    className="px-3 py-1.5 text-xs font-bold rounded-lg border border-slate-200 dark:border-slate-700 disabled:opacity-50"
+                  >
+                    Sljedeća
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         )}
 
@@ -826,6 +910,20 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
                             );
                           })}
                         </div>
+                        {(() => {
+                          const app = schoolApps.find(a => a.studentId === stud.id);
+                          if (app && app.status === 'LOCKED') {
+                            return (
+                              <button
+                                onClick={() => handleUnlockList(app.id)}
+                                className="mt-2 w-full py-1.5 bg-red-100 hover:bg-red-200 text-red-700 dark:bg-red-900/40 dark:hover:bg-red-900/60 dark:text-red-400 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                              >
+                                Otključaj listu
+                              </button>
+                            );
+                          }
+                          return null;
+                        })()}
                       </div>
 
                       {/* Uploaded documents verification block */}

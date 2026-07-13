@@ -34,9 +34,10 @@ export function InstitutionProgramsView({ institutionId, institutionType, progra
         <table className="w-full text-xs">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-100">
-              <th className="py-2 px-3">Naziv</th>
-              <th className="py-2 px-2">Kvota</th>
-              <th className="py-2 px-2">Bodovni prag</th>
+              <th className="py-2 px-3 text-left">Naziv</th>
+              <th className="py-2 px-2 text-left">Kvota</th>
+              <th className="py-2 px-2 text-left">Prag</th>
+              <th className="py-2 px-2 text-center">Status</th>
               <th className="py-2 px-3 text-right">Akcije</th>
             </tr>
           </thead>
@@ -46,7 +47,20 @@ export function InstitutionProgramsView({ institutionId, institutionType, progra
                 <td className="py-2 px-3">{p.name}</td>
                 <td className="py-2 px-2">{p.quota}</td>
                 <td className="py-2 px-2">{p.minPointsThreshold}</td>
-                <td className="py-2 px-3 text-right">
+                <td className="py-2 px-2 text-center">
+                  <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${p.isPublished ? 'bg-green-100 text-green-700' : 'bg-slate-200 text-slate-500'}`}>
+                    {p.isPublished ? 'Objavljeno' : 'Skriveno'}
+                  </span>
+                </td>
+                <td className="py-2 px-3 text-right flex justify-end gap-2">
+                    {canUpdate && (
+                        <button 
+                          onClick={() => onSave({ ...p, isPublished: !p.isPublished })} 
+                          className="px-2 py-1 bg-slate-100 hover:bg-slate-200 rounded text-[10px] font-bold"
+                        >
+                          {p.isPublished ? 'Sakrij' : 'Objavi'}
+                        </button>
+                    )}
                     {canUpdate && (
                         <button onClick={() => onDelete(p.id)} className="p-1 text-red-500"><Trash2 className="h-4 w-4"/></button>
                     )}
@@ -56,7 +70,6 @@ export function InstitutionProgramsView({ institutionId, institutionType, progra
           </tbody>
         </table>
       </div>
-
       {canCreate && (
         <div className="p-4 bg-slate-50 rounded-2xl space-y-3">
             <h4 className="font-bold text-sm">Dodaj novi program</h4>
@@ -64,7 +77,7 @@ export function InstitutionProgramsView({ institutionId, institutionType, progra
                 <input placeholder="Naziv programa" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, name: e.target.value})} />
                 <input placeholder="Kvota" type="number" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, quota: parseInt(e.target.value)})} />
                 <input placeholder="Bodovni prag" type="number" className="p-2 border rounded-xl text-xs" onChange={e => setNewProgram({...newProgram, minPointsThreshold: parseInt(e.target.value)})} />
-                <button className="bg-indigo-600 text-white rounded-xl text-xs font-bold" onClick={() => onSave({ ...newProgram, id: `prog-${Date.now()}` } as SchoolProgram)}>Spremi</button>
+                <button className="bg-indigo-600 text-white rounded-xl text-xs font-bold" onClick={() => onSave({ ...newProgram, id: `prog-${Date.now()}`, isPublished: true, isActive: true } as SchoolProgram)}>Spremi</button>
             </div>
         </div>
       )}

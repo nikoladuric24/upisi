@@ -354,6 +354,7 @@ CREATE TABLE school_programs (
   min_points_threshold NUMERIC(4,2) NOT NULL DEFAULT 0.00,
   subjects_required VARCHAR(100)[] NOT NULL, -- Nazivi predmeta
   is_active BOOLEAN NOT NULL DEFAULT true,
+  is_published BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   created_by UUID,
@@ -502,6 +503,7 @@ CREATE TABLE study_programs (
   matura_elective_subject_id UUID REFERENCES exam_subjects(id),
   high_school_grades_weight NUMERIC(4,2) NOT NULL DEFAULT 40.00, -- npr 40%
   is_active BOOLEAN NOT NULL DEFAULT true,
+  is_published BOOLEAN NOT NULL DEFAULT false,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   created_by UUID,

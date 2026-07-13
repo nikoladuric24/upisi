@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   User,
   Student,
@@ -28,6 +28,8 @@ import {
 import { WorkflowService } from '../lib/workflow';
 import { useRbac } from '../components/RbacContext';
 import { InstitutionProgramsView } from '../components/InstitutionProgramsView';
+import { MaturaModule } from './MaturaModule';
+import { StudyApplicationModule } from './StudyApplicationModule';
 import {
   BookOpen,
   Calendar,
@@ -114,6 +116,9 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
 
   // Dynamic tab switcher to prevent showing unauthorized tab
   React.useEffect(() => {
+    // Only run if permissions are loaded (session is not null)
+    if (!session) return;
+
     const allowedTabs: string[] = [];
     if (hasPermission('exams.read')) allowedTabs.push('matura');
     if (hasPermission('schools.read')) allowedTabs.push('fakulteti');
@@ -121,7 +126,7 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
     if (hasPermission('students.read')) allowedTabs.push('nastavnik');
     if (hasPermission('school_programs.read', { schoolId: session?.school_id })) allowedTabs.push('programi');
 
-    if (!allowedTabs.includes(activeTab) && allowedTabs.length > 0) {
+    if (allowedTabs.length > 0 && !allowedTabs.includes(activeTab)) {
       handleTabChange(allowedTabs[0]);
     }
   }, [session, activeTab, hasPermission]);
@@ -139,17 +144,29 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
   const [pdfReady, setPdfReady] = useState(false);
   const [isGeneratingExcel, setIsGeneratingExcel] = useState(false);
   const [excelReady, setExcelReady] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 6;
 
   // Filter study programs
   const filteredStudies = studyPrograms.filter(prog => {
     const faculty = faculties.find(f => f.id === prog.facultyId);
     const university = universities.find(u => u.id === faculty?.universityId);
     
+    if (isStudent && (prog.isPublished === false || prog.isActive === false)) return false;
+
     const matchesSearch = prog.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
                           faculty?.name.toLowerCase().includes(searchQuery.toLowerCase());
     const matchesUni = selectedUniversityId ? university?.id === selectedUniversityId : true;
     return matchesSearch && matchesUni;
   });
+
+  const paginatedStudies = filteredStudies.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const totalPages = Math.ceil(filteredStudies.length / itemsPerPage);
+
+  // Reset pagination on filter change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, selectedUniversityId]);
 
   // Get Ivan's current registrations
   const studentRegs = examRegistrations.filter(r => r.studentId === currentStudent.id && r.status === 'REGISTERED');
@@ -413,213 +430,31 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
         
         {/* TAB: DRŽAVNA MATURA */}
         {activeTab === 'matura' && (
-          <div className="space-y-6">
-            
-            {/* Quick Register form */}
-            <div className="p-5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-100 dark:border-slate-800 space-y-4">
-              <h3 className="font-extrabold text-xs uppercase text-indigo-600 tracking-wider flex items-center gap-1.5">
-                <BookOpen className="h-4 w-4" /> Prijava novog ispita državne mature
-              </h3>
-              
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Predmet mature</label>
-                  <select
-                    value={selectedSubjectId}
-                    onChange={e => setSelectedSubjectId(e.target.value)}
-                    className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100"
-                  >
-                    <option value="">Odaberi predmet...</option>
-                    {examSubjects.map(sub => (
-                      <option key={sub.id} value={sub.id}>
-                        {sub.name} {sub.isElective ? '(Izborni)' : '(Obvezni)'}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Razina ispita</label>
-                  <select
-                    value={selectedLevel}
-                    onChange={e => setSelectedLevel(e.target.value as any)}
-                    disabled={examSubjects.find(s => s.id === selectedSubjectId)?.isElective}
-                    className="w-full p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs text-slate-800 dark:text-slate-100 disabled:opacity-50"
-                  >
-                    <option value="A">Viša razina (A)</option>
-                    <option value="B">Osnovna razina (B)</option>
-                  </select>
-                </div>
-
-                <button
-                  onClick={handleRegisterExam}
-                  className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-1.5 cursor-pointer"
-                >
-                  <Plus className="h-4 w-4" /> Prijavi ispit
-                </button>
-              </div>
-            </div>
-
-            {/* Registered exams & results */}
-            <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                <h4 className="font-extrabold text-xs uppercase text-slate-400 tracking-wider">Moje prijave i postignuti rezultati</h4>
-                <button
-                  onClick={triggerPdfExport}
-                  className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-[11px] font-bold flex items-center gap-1.5 hover:bg-slate-200 transition-all cursor-pointer"
-                >
-                  <Printer className="h-3.5 w-3.5" /> Generiraj službenu potvrdu (PDF)
-                </button>
-              </div>
-
-              {isGeneratingPdf && (
-                <div className="p-4 bg-indigo-50 border border-indigo-150 text-indigo-800 text-xs rounded-xl animate-pulse">
-                  Kompajliranje podataka i generiranje službenog PDF ispisa državne mature s QR kodom...
-                </div>
-              )}
-
-              {pdfReady && !isGeneratingPdf && (
-                <div className="p-4 bg-emerald-50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800 text-emerald-800 dark:text-emerald-400 text-xs rounded-xl flex justify-between items-center">
-                  <span>Službena potvrda o položenim ispitima državne mature je spremna za preuzimanje.</span>
-                  <a href="#" className="font-bold underline flex items-center gap-1"><Download className="h-3.5 w-3.5" /> Preuzmi potvrdu</a>
-                </div>
-              )}
-
-              <div className="space-y-2">
-                {studentRegs.map(reg => {
-                  const period = examPeriods.find(p => p.id === reg.examPeriodId);
-                  const subject = examSubjects.find(s => s.id === period?.subjectId);
-                  const result = examResults.find(r => r.examPeriodId === period?.id);
-
-                  return (
-                    <div key={reg.id} className="p-4 bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <span className="font-black text-xs text-slate-800 dark:text-slate-100">{subject?.name}</span>
-                          <span className={`px-1.5 py-0.2 text-[9px] font-bold rounded-sm ${
-                            period?.level === 'A' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950/30 text-amber-400' :
-                            period?.level === 'B' ? 'bg-blue-100 text-blue-800 dark:bg-blue-950/30 text-blue-400' :
-                            'bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-300'
-                          }`}>
-                            Razina: {period?.level}
-                          </span>
-                        </div>
-                        <p className="text-[10px] text-slate-400 mt-1">Termin ispita: {period?.date} u {period?.time} sati</p>
-                      </div>
-
-                      {/* Display score if available */}
-                      <div className="flex items-center gap-4">
-                        {result ? (
-                          <div className="text-right">
-                            <span className="text-[10px] text-emerald-600 font-bold block">Položeno (Ocjena: {result.grade})</span>
-                            <span className="font-black text-sm text-slate-800 dark:text-slate-100">{result.scorePercentage}% | {result.pointsEarned} bodova</span>
-                          </div>
-                        ) : (
-                          <div className="flex gap-2">
-                            {!subject?.isElective && (
-                              <button
-                                onClick={() => handleChangeExamLevel(reg.id, period?.level === 'A' ? 'B' : 'A')}
-                                className="px-2.5 py-1 bg-slate-100 dark:bg-slate-800 text-[10px] text-indigo-600 dark:text-indigo-400 font-bold rounded-lg cursor-pointer"
-                              >
-                                Promijeni u {period?.level === 'A' ? 'B' : 'A'}
-                              </button>
-                            )}
-                            <button
-                              onClick={() => handleCancelExam(reg.id)}
-                              className="px-2 py-1 bg-red-50 hover:bg-red-100 text-[10px] text-red-600 rounded-lg cursor-pointer"
-                            >
-                              Odjavi
-                            </button>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
+          <MaturaModule
+            currentUser={currentUser}
+            currentStudent={currentStudent}
+            examSubjects={examSubjects}
+            examPeriods={examPeriods}
+            examRegistrations={examRegistrations}
+            setExamRegistrations={setExamRegistrations}
+            examResults={examResults}
+          />
         )}
 
         {/* TAB: UNIVERSITY SEARCH */}
         {activeTab === 'fakulteti' && (
-          <div className="space-y-6">
-            <div className="flex flex-col sm:flex-row gap-3">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Pretraži studijske programe i fakultete u Hrvatskoj..."
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                  className="pl-9 pr-4 py-2 w-full bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs"
-                />
-              </div>
-
-              <select
-                value={selectedUniversityId}
-                onChange={e => setSelectedUniversityId(e.target.value)}
-                className="p-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xs text-slate-800 dark:text-slate-100"
-              >
-                <option value="">Sva sveučilišta</option>
-                {universities.map(u => (
-                  <option key={u.id} value={u.id}>{u.name}</option>
-                ))}
-              </select>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {filteredStudies.map(study => {
-                const faculty = faculties.find(f => f.id === study.facultyId);
-                const university = universities.find(u => u.id === faculty?.universityId);
-                const isSelected = studentChoices.some(c => c.studyProgramId === study.id);
-
-                return (
-                  <div key={study.id} className="p-5 bg-slate-50 dark:bg-slate-800/30 border border-slate-100 dark:border-slate-800 rounded-2xl flex flex-col justify-between hover:border-indigo-300 dark:hover:border-indigo-900 transition-all">
-                    <div className="space-y-2">
-                      <div className="flex justify-between items-start">
-                        <span className="text-[9px] font-black uppercase tracking-wider text-purple-600 bg-purple-50 dark:bg-purple-950/40 px-2 py-0.5 rounded-sm">
-                          {university?.name}
-                        </span>
-                        <span className="text-[10px] text-slate-400 font-mono">Kvota: {study.quota}</span>
-                      </div>
-
-                      <div>
-                        <h4 className="font-extrabold text-sm text-slate-800 dark:text-slate-100">{study.name}</h4>
-                        <p className="text-xs text-slate-500 dark:text-slate-400">{faculty?.name}</p>
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-100 dark:border-slate-800/50">
-                        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-widest mb-1.5">Uvjeti i težinski bodovi:</p>
-                        <div className="flex flex-wrap gap-1">
-                          {study.requiresMaturaMandatory.map(req => {
-                            const sub = examSubjects.find(s => s.id === req.subjectId);
-                            return (
-                              <span key={req.subjectId} className="bg-slate-200/50 dark:bg-slate-800 text-[9px] text-slate-600 dark:text-slate-400 px-1.5 py-0.5 rounded-md font-mono">
-                                {sub?.name} ({req.minLevel !== 'N/A' ? req.minLevel : 'izb'}) - {req.weightPercentage}%
-                              </span>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    </div>
-
-                    <button
-                      onClick={() => handleAddStudyChoice(study)}
-                      disabled={isSelected}
-                      className={`mt-5 w-full py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-                        isSelected 
-                          ? 'bg-slate-100 dark:bg-slate-800 text-slate-400 cursor-not-allowed'
-                          : 'bg-indigo-600 hover:bg-indigo-700 text-white shadow-md'
-                      }`}
-                    >
-                      {isSelected ? 'Prijavljeno' : <><Plus className="h-4 w-4" /> Prijavi studijski program</>}
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <StudyApplicationModule
+            currentUser={currentUser}
+            currentStudent={currentStudent}
+            currentApp={currentApp}
+            universities={universities}
+            faculties={faculties}
+            studyPrograms={studyPrograms}
+            univChoices={univChoices}
+            setUnivChoices={setUnivChoices}
+            examResults={examResults}
+            examPeriods={examPeriods}
+          />
         )}
 
         {/* TAB: PRIORITETI */}

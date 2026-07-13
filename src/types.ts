@@ -66,6 +66,8 @@ export interface SchoolProgram {
   applicantsCount?: number;
   enrolledCount?: number;
   isArchived?: boolean;
+  isActive?: boolean;
+  isPublished?: boolean;
 }
 
 export interface SchoolYear {
@@ -157,6 +159,8 @@ export interface StudyProgram {
   applicantsCount?: number;
   enrolledCount?: number;
   isArchived?: boolean;
+  isActive?: boolean;
+  isPublished?: boolean;
   requiresMaturaMandatory: {
     subjectId: string; // e.g., Matematika
     minLevel: 'A' | 'B' | 'N/A';

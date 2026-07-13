@@ -187,8 +187,16 @@ USING (
 
 -- 4. Javno objavljeni programi - Učenici (read-only pristup javno dostupnim programima)
 CREATE POLICY public_school_programs_select ON school_programs FOR SELECT TO authenticated
-USING (true); 
+USING (
+  is_published = true 
+  OR is_super_admin() 
+  OR (school_id = get_user_school_id() AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'SECONDARY_ADMIN'))
+); 
 
 CREATE POLICY public_study_programs_select ON study_programs FOR SELECT TO authenticated
-USING (true); 
+USING (
+  is_published = true
+  OR is_super_admin()
+  OR (faculty_id = get_user_faculty_id() AND EXISTS (SELECT 1 FROM user_roles ur JOIN roles r ON ur.role_id = r.id WHERE ur.user_id = auth.uid() AND r.name = 'UNIVERSITY_ADMIN'))
+); 
 
