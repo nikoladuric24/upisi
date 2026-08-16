@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { INITIAL_USERS } from '../data/mockData';
-import { Shield, BookOpen, GraduationCap, School, Key, ArrowRight } from 'lucide-react';
+import { Shield, BookOpen, GraduationCap, School, Key, ArrowRight, Smartphone } from 'lucide-react';
 import { usePortal } from './PortalContext';
 
 interface AuthScreenProps {
@@ -16,6 +16,7 @@ interface AuthScreenProps {
 export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [authenticatorCode, setAuthenticatorCode] = useState('');
   const [error, setError] = useState('');
   const [showTestAccounts, setShowTestAccounts] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -43,7 +44,11 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({
+          email,
+          password,
+          totpCode: authenticatorCode.trim() || undefined,
+        }),
       });
 
       if (!response.ok) {
@@ -256,6 +261,31 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
+                  Autentifikator kod <span className="normal-case tracking-normal text-slate-400">(za zaposlenike)</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-3.5 text-slate-400">
+                    <Smartphone className="h-5 w-5" />
+                  </span>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={6}
+                    value={authenticatorCode}
+                    onChange={e => setAuthenticatorCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    placeholder="6-znamenkasti kod"
+                    disabled={loading}
+                    className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                  />
+                </div>
+                <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  Učenici ovo polje ostavljaju prazno. Nastavnici i administratori unose kod iz autentifikatora.
+                </p>
               </div>
 
               <button
