@@ -1,5 +1,4 @@
 import { createHmac } from "node:crypto";
-import { createActivationToken, normalizeEmail, verifyStudentPin } from "./pin-utils";
 
 type PortalType = "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
 
@@ -33,6 +32,78 @@ function setSessionCookie(res: any, token: string): void {
     "Set-Cookie",
     `${COOKIE_NAME}=${encodeURIComponent(token)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_MAX_AGE_SECONDS}`
   );
+}
+
+function normalizeEmail(value: string): string {
+  const raw = String(value || "").trim().toLowerCase();
+  if (!raw) return "";
+  const withDomain = raw.includes("@") ? raw : `${raw}@skolehr.xyz`;
+  return withDomain
+    .replace(/@eskole\.hr$/i, "@skolehr.xyz")
+    .replace(/@eskole\.me$/i, "@skolehr.xyz");
+}
+
+function getPinPepper(): string {
+  return process.env.ADMISSIONS_PIN_PEPPER || getSecret();
+}
+
+function createActivationToken(data: Record<string, unknown>): string {
+  const now = Date.now();
+  const payload = Buffer.from(JSON.stringify({
+    ...data,
+    createdAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 10 * 60 * 1000).toISOString()
+  })).toString("base64url");
+  return `${payload}.${signPayload(payload)}`;
+}
+
+function hashPin(email: string, portalType: PortalType, pin: string): string {
+  return createHmac("sha256", getPinPepper())
+    .update(`${portalType}:${normalizeEmail(email)}:${String(pin || "").trim()}`)
+    .digest("hex");
+}
+
+function createDeterministicMockPin(email: string, portalType: PortalType): string {
+  const digest = createHmac("sha256", getPinPepper()).update(`${portalType}:${normalizeEmail(email)}`).digest("hex");
+  return String(parseInt(digest.slice(0, 8), 16) % 10000).padStart(4, "0");
+}
+
+async function getStoredPin(email: string, portalType: PortalType): Promise<any | null> {
+  const supabaseUrl = (process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || "").replace(/\/$/, "");
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!supabaseUrl || !serviceKey) return null;
+
+  const query = `?select=*&email=eq.${encodeURIComponent(normalizeEmail(email))}&portal_type=eq.${portalType}&limit=1`;
+  const response = await fetch(`${supabaseUrl}/rest/v1/admissions_login_pins${query}`, {
+    method: "GET",
+    headers: {
+      apikey: serviceKey,
+      Authorization: `Bearer ${serviceKey}`
+    }
+  });
+
+  const raw = await response.text();
+  if (!response.ok) {
+    console.error("[UPISI_LOGIN] PIN read failed", response.status, raw);
+    throw new Error(raw || "Ne mogu dohvatiti PIN.");
+  }
+
+  const rows = raw ? JSON.parse(raw) : [];
+  return rows?.[0] || null;
+}
+
+async function verifyStudentPin(email: string, portalType: PortalType, pin: string): Promise<boolean> {
+  const cleanPin = String(pin || "").trim();
+  if (!/^\d{4}$/.test(cleanPin)) return false;
+
+  const supabaseConfigured = Boolean((process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL) && process.env.SUPABASE_SERVICE_ROLE_KEY);
+  if (!supabaseConfigured) {
+    return cleanPin === createDeterministicMockPin(email, portalType);
+  }
+
+  const stored = await getStoredPin(email, portalType);
+  if (!stored?.pin_hash) return false;
+  return stored.pin_hash === hashPin(email, portalType, cleanPin);
 }
 
 function resolvePortalFromHost(hostname: string): PortalType {

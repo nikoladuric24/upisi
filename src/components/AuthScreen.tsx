@@ -31,7 +31,10 @@ const COUNTRIES = [
 function normalizeEmailInput(value: string): string {
   const raw = String(value || '').trim().toLowerCase();
   if (!raw) return '';
-  return raw.includes('@') ? raw : `${raw}@skolehr.xyz`;
+  const withDomain = raw.includes('@') ? raw : `${raw}@skolehr.xyz`;
+  return withDomain
+    .replace(/@eskole\.hr$/i, '@skolehr.xyz')
+    .replace(/@eskole\.me$/i, '@skolehr.xyz');
 }
 
 export function AuthScreen({ onLogin }: AuthScreenProps) {
@@ -47,7 +50,17 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [showResendHelp, setShowResendHelp] = useState(false);
 
   const { config, portalType, setPortalTypeOverride, isDevMode } = usePortal();
-  const smsNumber = (import.meta as any).env?.VITE_ADMISSIONS_SMS_NUMBER || '(broj mobitela s kojeg se salje PIN)';
+  const smsNumber = (import.meta as any).env?.VITE_ADMISSIONS_SMS_NUMBER || '(broj telefona s kojeg ce biti poslan PIN nije postavljen)';
+
+  const readApiResponse = async (response: Response) => {
+    const raw = await response.text();
+    if (!raw) return {};
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return { error: raw };
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -77,7 +90,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         }),
       });
 
-      const data = await response.json();
+      const data = await readApiResponse(response);
 
       if (!response.ok || data.success === false) {
         setError(data.error || 'Prijava nije uspjela.');
@@ -97,7 +110,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
       onLogin(data.user);
     } catch {
-      setError('Pogreska prilikom povezivanja s posluziteljem.');
+      setError('Pogreska prilikom povezivanja s posluziteljem. Pokusajte ponovno ili provjerite Vercel deploy/log.');
       setLoading(false);
     }
   };
@@ -125,7 +138,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         })
       });
 
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok || data.success === false) {
         setError(data.error || 'Slanje PIN-a nije uspjelo.');
         setLoading(false);
@@ -159,7 +172,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         body: JSON.stringify({ email: user.email, password: '123456', pin: '1234' }),
       });
 
-      const data = await response.json();
+      const data = await readApiResponse(response);
       if (!response.ok || data.success === false) {
         setError(data.error || 'Prijava nije uspjela.');
         setLoading(false);
@@ -291,7 +304,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
               </h3>
               <p className="text-slate-500 dark:text-slate-400 text-sm mt-1">
                 {activation
-                  ? 'Unesite broj mobitela na koji cemo poslati trajni cetveroznamenkasti PIN.'
+          ? 'Unesite broj telefona na koji cemo poslati trajni cetveroznamenkasti PIN.'
                   : 'Prijavite se korisnickim imenom, lozinkom i PIN-om.'}
               </p>
             </div>
@@ -333,7 +346,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
                 <div>
                   <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
-                    Broj mobitela
+                    Broj telefona
                   </label>
                   <div className="relative">
                     <span className="absolute left-3.5 top-3.5 text-slate-400">

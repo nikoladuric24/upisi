@@ -54,7 +54,10 @@ export function verifyActivationToken(token: string): any | null {
 export function normalizeEmail(value: string): string {
   const raw = String(value || "").trim().toLowerCase();
   if (!raw) return "";
-  return raw.includes("@") ? raw : `${raw}@skolehr.xyz`;
+  const withDomain = raw.includes("@") ? raw : `${raw}@skolehr.xyz`;
+  return withDomain
+    .replace(/@eskole\.hr$/i, "@skolehr.xyz")
+    .replace(/@eskole\.me$/i, "@skolehr.xyz");
 }
 
 export function normalizeCountryCode(value: string): string {
