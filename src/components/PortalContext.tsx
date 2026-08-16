@@ -46,10 +46,10 @@ const PORTAL_CONFIGS: Record<PortalType, PortalConfig> = {
 export function resolvePortalFromHost(hostname: string): PortalType {
   const cleanHost = hostname.toLowerCase().split(':')[0].replace(/\.$/, '');
   
-  if (cleanHost === 'postani-student.skolehr.xyz') {
+  if (cleanHost === 'postani-student.skolehr.xyz' || cleanHost === 'fakulteti.skolehr.xyz') {
     return 'FACULTY_ADMISSIONS';
   }
-  if (cleanHost === 'upisi-u-srednje.skolehr.xyz' || cleanHost === 'e-srednja.skolehr.xyz') {
+  if (cleanHost === 'upisi-u-srednje.skolehr.xyz' || cleanHost === 'e-srednja.skolehr.xyz' || cleanHost === 'srednja.skolehr.xyz') {
     return 'SECONDARY_ADMISSIONS';
   }
 
@@ -79,7 +79,6 @@ export function PortalProvider({ children }: { children: React.ReactNode }) {
   const setPortalTypeOverride = (type: PortalType) => {
     localStorage.setItem('dev_portal_type_override', type);
     setPortalType(type);
-    window.location.reload();
   };
 
   const config = PORTAL_CONFIGS[portalType];

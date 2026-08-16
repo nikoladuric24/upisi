@@ -41,9 +41,24 @@ interface EMaticaSubject {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT || 3000);
+  const INTEGRATION_CLIENT_ID = process.env.EMATICA_SERVICE_CLIENT_ID || 'eduportal_mzo_client';
+  const INTEGRATION_CLIENT_SECRET = process.env.EMATICA_SERVICE_SECRET || 'secure_mzo_ematica_secret_key_2026';
+  const INTEGRATION_WEBHOOK_SECRET = process.env.EMATICA_WEBHOOK_SECRET || 'secure_mzo_ematica_webhook_key_2026';
 
+  app.set("trust proxy", 1);
   app.use(express.json());
+
+  function getRequestBaseUrl(req: express.Request): string {
+    const host = (req.headers['x-forwarded-host'] as string) || req.headers.host || `localhost:${PORT}`;
+    const proto = (req.headers['x-forwarded-proto'] as string) || req.protocol || (process.env.NODE_ENV === 'production' ? 'https' : 'http');
+    return `${proto.split(',')[0]}://${host.split(',')[0]}`;
+  }
+
+  function getIntegrationApiBaseUrl(req: express.Request): string {
+    const configured = process.env.EDUPORTAL_INTERNAL_BASE_URL || process.env.APP_URL;
+    return (configured || getRequestBaseUrl(req)).replace(/\/$/, '');
+  }
 
   // ==========================================
   // CENTRAL PORTAL RESOLVER & SESSION ENGINE
@@ -74,10 +89,10 @@ async function startServer() {
   function resolvePortalFromHost(hostname: string): "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS" {
     const cleanHost = hostname.toLowerCase().split(':')[0].replace(/\.$/, '');
     
-    if (cleanHost === 'postani-student.skolehr.xyz') {
+    if (cleanHost === 'postani-student.skolehr.xyz' || cleanHost === 'fakulteti.skolehr.xyz') {
       return 'FACULTY_ADMISSIONS';
     }
-    if (cleanHost === 'e-srednja.skolehr.xyz') {
+    if (cleanHost === 'e-srednja.skolehr.xyz' || cleanHost === 'upisi-u-srednje.skolehr.xyz' || cleanHost === 'srednja.skolehr.xyz') {
       return 'SECONDARY_ADMISSIONS';
     }
 
@@ -590,9 +605,6 @@ async function startServer() {
     const nonce = req.headers['x-integration-nonce'] as string;
     const signature = req.headers['x-integration-signature'] as string;
 
-    const validClientId = 'eduportal_mzo_client';
-    const secret = 'secure_mzo_ematica_secret_key_2026';
-
     // 1. Check OAuth 2.0 Token (e.g. Bearer token-XYZ)
     if (authHeader && authHeader.startsWith('Bearer ')) {
       const token = authHeader.substring(7);
@@ -603,7 +615,7 @@ async function startServer() {
 
     // 2. Check HMAC Signature (Test 10)
     if (clientId && timestamp && nonce && signature) {
-      if (clientId !== validClientId) {
+      if (clientId !== INTEGRATION_CLIENT_ID) {
         return res.status(403).json({ error: 'Nevažeći klijentski identifikator.' });
       }
 
@@ -622,7 +634,7 @@ async function startServer() {
       if (usedNonces.size > 1000) usedNonces.clear();
 
       // Recreate HMAC signature
-      const expectedSignature = crypto.createHmac('sha256', secret)
+      const expectedSignature = crypto.createHmac('sha256', INTEGRATION_CLIENT_SECRET)
         .update(`${timestamp}:${nonce}:${clientId}`)
         .digest('hex');
 
@@ -643,7 +655,7 @@ async function startServer() {
   // OAuth 2.0 token endpoint
   app.post("/api/integrations/eduportal/oauth/token", (req, res) => {
     const { grant_type, client_id, client_secret } = req.body;
-    if (client_id === "eduportal_mzo_client" && client_secret === "secure_mzo_ematica_secret_key_2026") {
+    if (grant_type === "client_credentials" && client_id === INTEGRATION_CLIENT_ID && client_secret === INTEGRATION_CLIENT_SECRET) {
       ematicaTokenStore.accessToken = "secure-ematica-token-" + crypto.randomBytes(8).toString("hex");
       ematicaTokenStore.expiresAt = Date.now() + 60 * 60 * 1000; // 1 hour
       return res.status(200).json({
@@ -883,14 +895,13 @@ async function startServer() {
     };
 
     // Sign using webhook secret (HMAC SHA256)
-    const webhookSecret = 'secure_mzo_ematica_webhook_key_2026';
-    const signature = crypto.createHmac('sha256', webhookSecret)
+    const signature = crypto.createHmac('sha256', INTEGRATION_WEBHOOK_SECRET)
       .update(JSON.stringify(payload))
       .digest('hex');
 
     // Send actual HTTP POST request to EduPortal webhook endpoint
     try {
-      const response = await fetch(`http://localhost:${PORT}/api/integrations/eduportal/webhook`, {
+      const response = await fetch(`${getIntegrationApiBaseUrl(req)}/api/integrations/eduportal/webhook`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -951,7 +962,6 @@ async function startServer() {
 
   app.post("/api/integrations/eduportal/webhook", (req, res) => {
     const signature = req.headers['x-ematica-signature'] as string;
-    const webhookSecret = 'secure_mzo_ematica_webhook_key_2026';
 
     if (!signature) {
       return res.status(401).json({ error: 'Nedostaje sigurnosni potpis webhooka.' });
@@ -959,7 +969,7 @@ async function startServer() {
 
     // Verify HMAC
     const rawBody = JSON.stringify(req.body);
-    const expectedSignature = crypto.createHmac('sha256', webhookSecret)
+    const expectedSignature = crypto.createHmac('sha256', INTEGRATION_WEBHOOK_SECRET)
       .update(rawBody)
       .digest('hex');
 
@@ -1018,17 +1028,15 @@ async function startServer() {
     let errorSummary = "";
 
     // Security Credentials and Signing
-    const validClientId = 'eduportal_mzo_client';
-    const secret = 'secure_mzo_ematica_secret_key_2026';
     const timestamp = new Date().toISOString();
     const nonce = "nonce-" + crypto.randomBytes(8).toString("hex");
-    const signature = crypto.createHmac('sha256', secret)
-      .update(`${timestamp}:${nonce}:${validClientId}`)
+    const signature = crypto.createHmac('sha256', INTEGRATION_CLIENT_SECRET)
+      .update(`${timestamp}:${nonce}:${INTEGRATION_CLIENT_ID}`)
       .digest('hex');
 
     const headers = {
       'Content-Type': 'application/json',
-      'X-Integration-Client-Id': validClientId,
+      'X-Integration-Client-Id': INTEGRATION_CLIENT_ID,
       'X-Integration-Timestamp': timestamp,
       'X-Integration-Nonce': nonce,
       'X-Integration-Signature': signature
@@ -1041,12 +1049,14 @@ async function startServer() {
 
       console.log(`[SYNC SERVICE] Pokrećem ${syncType} sinkronizaciju...`);
 
+      const integrationApiBaseUrl = getIntegrationApiBaseUrl(req);
+
       // 1. FETCH SCHOOLS & PROGRAMS S2S
-      const schoolsResponse = await fetch(`http://localhost:${PORT}/api/integrations/eduportal/schools`, { headers });
+      const schoolsResponse = await fetch(`${integrationApiBaseUrl}/api/integrations/eduportal/schools`, { headers });
       if (!schoolsResponse.ok) throw new Error("S2S neuspjeh pri dohvatu škola.");
       const ematicaSchools: any[] = await schoolsResponse.json();
 
-      const programsResponse = await fetch(`http://localhost:${PORT}/api/integrations/eduportal/programs`, { headers });
+      const programsResponse = await fetch(`${integrationApiBaseUrl}/api/integrations/eduportal/programs`, { headers });
       if (!programsResponse.ok) throw new Error("S2S neuspjeh pri dohvatu programa.");
       const ematicaPrograms: any[] = await programsResponse.json();
 
@@ -1111,12 +1121,12 @@ async function startServer() {
       }
 
       // 2. FETCH STUDENTS S2S
-      let fetchUrl = `http://localhost:${PORT}/api/integrations/eduportal/students`;
+      let fetchUrl = `${integrationApiBaseUrl}/api/integrations/eduportal/students`;
       if (syncType === 'MANUAL_STUDENT' && studentId) {
         // Find external student ID from client studentId
         const extLinkObj = externalLinksList.find(l => l.studentId === studentId);
         const extId = extLinkObj ? extLinkObj.externalStudentId : "ext-" + studentId.split('-')[1];
-        fetchUrl = `http://localhost:${PORT}/api/integrations/eduportal/students/${extId}`;
+        fetchUrl = `${integrationApiBaseUrl}/api/integrations/eduportal/students/${extId}`;
       }
 
       const studentsResponse = await fetch(fetchUrl, { headers });
@@ -1242,7 +1252,7 @@ async function startServer() {
           }
 
           // Fetch student subjects and grades (Section 7, 8)
-          const gradesUrl = `http://localhost:${PORT}/api/integrations/eduportal/students/${estud.id}/grades`;
+          const gradesUrl = `${integrationApiBaseUrl}/api/integrations/eduportal/students/${estud.id}/grades`;
           const gradesRes = await fetch(gradesUrl, { headers });
           if (gradesRes.ok) {
             const studentGrades: any[] = await gradesRes.json();
