@@ -2,7 +2,6 @@ import express from "express";
 import path from "path";
 import crypto from "crypto";
 import fs from "fs";
-import { createServer as createViteServer } from "vite";
 
 // Define TypeScript interfaces for our server-side storage & sync
 interface EMaticaStudent {
@@ -2965,6 +2964,7 @@ export async function createApp() {
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
