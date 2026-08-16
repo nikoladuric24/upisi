@@ -5,7 +5,7 @@ import {
   resolvePortalFromHost,
   sendMethodNotAllowed,
   setSessionCookie
-} from "./_auth";
+} from "./_auth.ts";
 
 export default async function handler(req: any, res: any) {
   if (req.method === "OPTIONS") {

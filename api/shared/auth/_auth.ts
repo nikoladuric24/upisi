@@ -1,4 +1,4 @@
-import crypto from "crypto";
+import { createHmac } from "crypto";
 
 type PortalType = "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
 
@@ -31,7 +31,7 @@ function getSecret(): string {
 }
 
 function signPayload(payload: string): string {
-  return crypto.createHmac("sha256", getSecret()).update(payload).digest("base64url");
+  return createHmac("sha256", getSecret()).update(payload).digest("base64url");
 }
 
 export function normalizeEmail(value: string): string {
