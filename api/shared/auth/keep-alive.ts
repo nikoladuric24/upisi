@@ -1,13 +1,7 @@
-import { getSessionFromRequest, sendMethodNotAllowed } from "./_auth.ts";
-
 export default async function handler(req: any, res: any) {
   if (req.method !== "POST") {
-    return sendMethodNotAllowed(res, ["POST"]);
-  }
-
-  const session = getSessionFromRequest(req);
-  if (!session) {
-    return res.status(401).json({ success: false, error: "Nema aktivne sesije." });
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ success: false, error: "Method Not Allowed", allowed: ["POST"] });
   }
 
   return res.status(200).json({ success: true });
