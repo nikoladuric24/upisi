@@ -50,6 +50,7 @@
     { "src": "/api/shared/auth/logout", "dest": "/api/shared/auth/logout.ts" },
     { "src": "/api/shared/auth/keep-alive", "dest": "/api/shared/auth/keep-alive.ts" },
     { "src": "/api/(.*)", "dest": "/api/index.ts" },
+    { "handle": "filesystem" },
     { "src": "/(.*)", "dest": "/index.html" }
   ]
 }
