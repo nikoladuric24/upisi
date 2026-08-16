@@ -34,7 +34,7 @@ export function createActivationToken(data: Record<string, unknown>): string {
     ...data,
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + ACTIVATION_MAX_AGE_SECONDS * 1000).toISOString()
-  })).toString("base64url");
+  }), "utf8").toString("hex");
   return `${payload}.${signPayload(payload)}`;
 }
 
@@ -43,7 +43,7 @@ export function verifyActivationToken(token: string): any | null {
   if (!payload || !signature || signPayload(payload) !== signature) return null;
 
   try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    const data = JSON.parse(Buffer.from(payload, "hex").toString("utf8"));
     if (!data?.expiresAt || new Date(data.expiresAt).getTime() <= Date.now()) return null;
     return data;
   } catch {

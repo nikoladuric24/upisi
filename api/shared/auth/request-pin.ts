@@ -28,7 +28,7 @@ function verifyActivationToken(token: string): any | null {
   if (!payload || !signature || signPayload(payload) !== signature) return null;
 
   try {
-    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    const data = JSON.parse(Buffer.from(payload, "hex").toString("utf8"));
     if (!data?.expiresAt || new Date(data.expiresAt).getTime() <= Date.now()) return null;
     return data;
   } catch {

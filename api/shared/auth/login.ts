@@ -53,7 +53,7 @@ function createActivationToken(data: Record<string, unknown>): string {
     ...data,
     createdAt: new Date(now).toISOString(),
     expiresAt: new Date(now + 10 * 60 * 1000).toISOString()
-  })).toString("base64url");
+  }), "utf8").toString("hex");
   return `${payload}.${signPayload(payload)}`;
 }
 
