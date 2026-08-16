@@ -1,19 +1,10 @@
-import { createApp } from "../../../server";
-
-const appPromise = createApp();
+import { clearSessionCookie, sendMethodNotAllowed } from "./_auth";
 
 export default async function handler(req: any, res: any) {
-  try {
-    const app = await appPromise;
-    return app(req, res);
-  } catch (error: any) {
-    console.error("[UPISI_API] Logout failed:", {
-      message: error?.message,
-      stack: error?.stack
-    });
-    return res.status(500).json({
-      success: false,
-      error: "Odjavu trenutno nije moguce obraditi."
-    });
+  if (req.method !== "POST") {
+    return sendMethodNotAllowed(res, ["POST"]);
   }
+
+  clearSessionCookie(res);
+  return res.status(200).json({ success: true });
 }

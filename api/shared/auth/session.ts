@@ -1,19 +1,20 @@
-import { createApp } from "../../../server";
-
-const appPromise = createApp();
+import { getSessionFromRequest, sendMethodNotAllowed } from "./_auth";
 
 export default async function handler(req: any, res: any) {
-  try {
-    const app = await appPromise;
-    return app(req, res);
-  } catch (error: any) {
-    console.error("[UPISI_API] Session failed:", {
-      message: error?.message,
-      stack: error?.stack
-    });
-    return res.status(500).json({
-      success: false,
-      error: "Sesiju trenutno nije moguce provjeriti."
-    });
+  if (req.method !== "GET") {
+    return sendMethodNotAllowed(res, ["GET"]);
   }
+
+  const session = getSessionFromRequest(req);
+  if (!session) {
+    return res.status(401).json({ success: false, error: "Nema aktivne sesije." });
+  }
+
+  return res.status(200).json({
+    success: true,
+    user: session.user,
+    roles: session.roles,
+    portalType: session.portalType,
+    source: session.source
+  });
 }
