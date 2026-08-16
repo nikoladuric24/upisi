@@ -22,6 +22,7 @@ import {
 } from '../lib/storage';
 import { WorkflowService } from '../lib/workflow';
 import { useRbac } from '../components/RbacContext';
+import { usePortal } from '../components/PortalContext';
 import {
   GraduationCap,
   Calculator,
@@ -50,6 +51,7 @@ interface PrimarySchoolPortalProps {
 
 export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimarySchoolPortalProps) {
   const { session, hasPermission, logRbacAction } = useRbac();
+  const { portalType, config } = usePortal();
 
   // Database states
   const [students, setStudents] = useState<Student[]>(() => getTable<Student>('students'));
@@ -384,8 +386,10 @@ export function PrimarySchoolPortal({ currentUser, activeTabOverride }: PrimaryS
       {/* Dynamic Portal Header Card */}
       <div className="p-6 bg-linear-to-r from-blue-600 to-indigo-600 dark:from-blue-950 dark:to-indigo-950 text-white rounded-3xl shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="space-y-1">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-blue-200">srednje.e-upisi.hr Modul</span>
-          <h2 className="text-xl font-extrabold tracking-tight">Portal osnovnog obrazovanja i e-Upisa</h2>
+          <span className="text-[10px] uppercase font-bold tracking-wider text-blue-200">
+            {portalType === 'FACULTY_ADMISSIONS' ? 'Postani-Student.hr Modul' : 'srednje.e-upisi.hr Modul'}
+          </span>
+          <h2 className="text-xl font-extrabold tracking-tight">{config.name}</h2>
           <p className="text-xs text-blue-100">
             {isStudent ? `Kandidat: ${currentUser.fullName} | OIB: ${currentStudent?.oib}` : `Uloga: ${currentUser.role} | Škola: OŠ Nikole Tesle`}
           </p>

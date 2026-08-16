@@ -27,15 +27,15 @@ const PortalContext = createContext<PortalContextType | undefined>(undefined);
 const PORTAL_CONFIGS: Record<PortalType, PortalConfig> = {
   FACULTY_ADMISSIONS: {
     portalType: 'FACULTY_ADMISSIONS',
-    name: 'Postani student',
-    shortName: 'Postani Student',
-    description: 'Nacionalni portal za državnu maturu i upis na fakultete',
+    name: 'Postani student – Državna matura i upis na studije',
+    shortName: 'Postani student',
+    description: 'Nacionalni portal za državnu maturu i upis na studije',
     primaryColor: 'indigo',
     allowedRoles: ['SECONDARY_STUDENT', 'SECONDARY_HOMEROOM_TEACHER', 'SECONDARY_ADMIN', 'UNIVERSITY_ADMIN', 'SUPER_ADMIN']
   },
   SECONDARY_ADMISSIONS: {
     portalType: 'SECONDARY_ADMISSIONS',
-    name: 'e-Srednja',
+    name: 'e-Srednja – Upis u srednje škole',
     shortName: 'e-Srednja',
     description: 'Jedinstveni portal za upis učenika u srednje škole',
     primaryColor: 'emerald',
@@ -49,7 +49,7 @@ export function resolvePortalFromHost(hostname: string): PortalType {
   if (cleanHost === 'postani-student.skolehr.xyz') {
     return 'FACULTY_ADMISSIONS';
   }
-  if (cleanHost === 'upisi-u-srednje.skolehr.xyz') {
+  if (cleanHost === 'upisi-u-srednje.skolehr.xyz' || cleanHost === 'e-srednja.skolehr.xyz') {
     return 'SECONDARY_ADMISSIONS';
   }
 

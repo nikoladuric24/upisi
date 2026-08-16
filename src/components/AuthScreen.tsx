@@ -264,7 +264,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
           </div>
 
           {/* Test Access Accounts Panel */}
-          {showTestAccounts && (
+          {showTestAccounts && isDevMode && (
             <div className="p-6 bg-white dark:bg-slate-900 rounded-3xl shadow-xl border border-slate-100 dark:border-slate-800">
               <div className="flex items-center justify-between mb-4 border-b border-slate-100 dark:border-slate-800 pb-3">
                 <h4 className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider flex items-center gap-2">

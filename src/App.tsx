@@ -58,7 +58,7 @@ interface AppContentProps {
 function AppContent({ user, setUser }: AppContentProps) {
   const { theme, toggleTheme } = useTheme();
   const { session, hasPermission, reloadSession, logRbacAction, clearSession } = useRbac();
-  const { config, portalType } = usePortal();
+  const { config, portalType, isDevMode } = usePortal();
   const [notifications, setNotifications] = useState<AppNotification[]>([]);
   const [systemLogs, setSystemLogs] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
@@ -92,11 +92,23 @@ function AppContent({ user, setUser }: AppContentProps) {
     
     const checkSession = async () => {
       try {
-        // Force logout on opening the portal to ensure user is logged out and must explicitly login
-        await fetch('/api/shared/auth/logout', { method: 'POST' });
-        setCurrentUser(null);
-        setUser(null);
-        clearSession();
+        const response = await fetch('/api/shared/auth/session');
+        if (response.ok) {
+          const data = await response.json();
+          if (data.success && data.user) {
+            setCurrentUser(data.user);
+            setUser(data.user);
+            reloadSession(data.user);
+          } else {
+            setCurrentUser(null);
+            setUser(null);
+            clearSession();
+          }
+        } else {
+          setCurrentUser(null);
+          setUser(null);
+          clearSession();
+        }
       } catch (err) {
         // Safe fallback
         setCurrentUser(null);
@@ -325,53 +337,55 @@ function AppContent({ user, setUser }: AppContentProps) {
             {/* Right 3-cols: Live Interactive Role Switcher / Simulator Panel */}
             <aside className="lg:col-span-3 space-y-5">
               
-              <div className="p-5 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/60 rounded-3xl shadow-xs">
-                <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 dark:border-slate-800 pb-2 mb-3 flex items-center gap-2">
-                  <UserCheck className="h-4 w-4 text-indigo-500" />
-                  Brza izmjena uloge
-                </h3>
-                
-                <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
-                  Sustav koristi strogi <strong>Role-Based Access Control (RBAC)</strong>. Odaberite ulogu dopuštenu na ovom portalu:
-                </p>
+              {(isDevMode || (user && user.role === 'SUPER_ADMIN')) && (
+                <div className="p-5 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/60 rounded-3xl shadow-xs">
+                  <h3 className="text-xs font-bold text-slate-400 uppercase tracking-widest border-b border-slate-100 dark:border-slate-800 pb-2 mb-3 flex items-center gap-2">
+                    <UserCheck className="h-4 w-4 text-indigo-500" />
+                    Brza izmjena uloge
+                  </h3>
+                  
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed mb-4">
+                    Sustav koristi strogi <strong>Role-Based Access Control (RBAC)</strong>. Odaberite ulogu dopuštenu na ovom portalu:
+                  </p>
 
-                <div className="space-y-2">
-                  {[
-                    { id: 'usr-admin', name: 'Nikola Đurić', role: 'SUPER_ADMIN', desc: 'Sistemski nadzor' },
-                    { id: 'usr-prim-stud', name: 'Luka Marić', role: 'PRIMARY_STUDENT', desc: 'Kandidat 8. r. (e-Upisi)' },
-                    { id: 'usr-prim-teach', name: 'Marko Horvat', role: 'PRIMARY_HOMEROOM_TEACHER', desc: 'Razrednik 8.A' },
-                    { id: 'usr-sec-stud', name: 'Ivan Jurić', role: 'SECONDARY_STUDENT', desc: 'Maturant (Postani Student)' },
-                    { id: 'usr-sec-teach', name: 'Petra Novak', role: 'SECONDARY_HOMEROOM_TEACHER', desc: 'Razrednik 4.A' },
-                    { id: 'usr-uni-admin', name: 'Prof. Stjepan Car', role: 'UNIVERSITY_ADMIN', desc: 'Ured za upise (FER)' }
-                  ]
-                  .filter(sim => config.allowedRoles.includes(sim.role))
-                  .map(sim => (
-                    <button
-                      key={sim.id}
-                      onClick={() => handleSimulateUser({
-                        id: sim.id,
-                        email: `${sim.name.toLowerCase().replace(/\s+/g, '')}@skole.hr`,
-                        fullName: sim.name,
-                        role: sim.role as any,
-                        createdAt: new Date().toISOString()
-                      })}
-                      className={`w-full p-2.5 rounded-xl border text-left transition-all text-xs flex flex-col cursor-pointer ${
-                        user.role === sim.role
-                          ? 'bg-indigo-50 dark:bg-indigo-950/20 border-indigo-400 dark:border-indigo-800'
-                          : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 border-slate-100 dark:border-slate-800'
-                      }`}
-                    >
-                      <div className="flex justify-between items-center w-full">
-                        <span className="font-bold text-slate-800 dark:text-slate-200">{sim.name}</span>
-                        {user.role === sim.role && (
-                          <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
-                        )}
-                      </div>
-                      <span className="text-[10px] text-slate-400 mt-0.5">{sim.desc}</span>
-                    </button>
-                  ))}
+                  <div className="space-y-2">
+                    {[
+                      { id: 'usr-admin', name: 'Nikola Đurić', role: 'SUPER_ADMIN', desc: 'Sistemski nadzor' },
+                      { id: 'usr-prim-stud', name: 'Luka Marić', role: 'PRIMARY_STUDENT', desc: 'Kandidat 8. r. (e-Upisi)' },
+                      { id: 'usr-prim-teach', name: 'Marko Horvat', role: 'PRIMARY_HOMEROOM_TEACHER', desc: 'Razrednik 8.A' },
+                      { id: 'usr-sec-stud', name: 'Ivan Jurić', role: 'SECONDARY_STUDENT', desc: 'Maturant (Postani Student)' },
+                      { id: 'usr-sec-teach', name: 'Petra Novak', role: 'SECONDARY_HOMEROOM_TEACHER', desc: 'Razrednik 4.A' },
+                      { id: 'usr-uni-admin', name: 'Prof. Stjepan Car', role: 'UNIVERSITY_ADMIN', desc: 'Ured za upise (FER)' }
+                    ]
+                    .filter(sim => config.allowedRoles.includes(sim.role))
+                    .map(sim => (
+                      <button
+                        key={sim.id}
+                        onClick={() => handleSimulateUser({
+                          id: sim.id,
+                          email: `${sim.name.toLowerCase().replace(/\s+/g, '')}@skole.hr`,
+                          fullName: sim.name,
+                          role: sim.role as any,
+                          createdAt: new Date().toISOString()
+                        })}
+                        className={`w-full p-2.5 rounded-xl border text-left transition-all text-xs flex flex-col cursor-pointer ${
+                          user.role === sim.role
+                            ? 'bg-indigo-50 dark:bg-indigo-950/20 border-indigo-400 dark:border-indigo-800'
+                            : 'bg-slate-50 hover:bg-slate-100 dark:bg-slate-800/40 dark:hover:bg-slate-800 border-slate-100 dark:border-slate-800'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center w-full">
+                          <span className="font-bold text-slate-800 dark:text-slate-200">{sim.name}</span>
+                          {user.role === sim.role && (
+                            <span className="w-2 h-2 rounded-full bg-indigo-600 animate-ping" />
+                          )}
+                        </div>
+                        <span className="text-[10px] text-slate-400 mt-0.5">{sim.desc}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
+              )}
 
               {/* Dynamic Permission-Based Navigation Links */}
               <div className="p-5 bg-white dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800/60 rounded-3xl shadow-xs space-y-3 animate-fade-in">

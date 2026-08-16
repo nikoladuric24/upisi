@@ -27,6 +27,7 @@ import {
 } from '../lib/storage';
 import { WorkflowService } from '../lib/workflow';
 import { useRbac } from '../components/RbacContext';
+import { usePortal } from '../components/PortalContext';
 import { InstitutionProgramsView } from '../components/InstitutionProgramsView';
 import { MaturaModule } from './MaturaModule';
 import { StudyApplicationModule } from './StudyApplicationModule';
@@ -58,6 +59,7 @@ interface SecondarySchoolPortalProps {
 
 export function SecondarySchoolPortal({ currentUser, activeTabOverride }: SecondarySchoolPortalProps) {
   const { session, hasPermission, logRbacAction } = useRbac();
+  const { portalType, config } = usePortal();
 
   // Database states
   const [students, setStudents] = useState<Student[]>(() => getTable<Student>('students'));
@@ -535,8 +537,10 @@ export function SecondarySchoolPortal({ currentUser, activeTabOverride }: Second
       {/* Dynamic Header Card */}
       <div className="p-6 bg-linear-to-r from-purple-600 to-indigo-600 dark:from-purple-950 dark:to-indigo-950 text-white rounded-3xl shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="space-y-1">
-          <span className="text-[10px] uppercase font-bold tracking-wider text-purple-200">Postani-Student.hr Modul</span>
-          <h2 className="text-xl font-extrabold tracking-tight">Srednjoškolski portal i Državna matura</h2>
+          <span className="text-[10px] uppercase font-bold tracking-wider text-purple-200">
+            {portalType === 'FACULTY_ADMISSIONS' ? 'Postani-Student.hr Modul' : 'e-Srednja.hr Modul'}
+          </span>
+          <h2 className="text-xl font-extrabold tracking-tight">{config.name}</h2>
           <p className="text-xs text-purple-100">
             {isStudent ? `Kandidat: ${currentUser.fullName} | Razred: 4.A (MIOC) | OIB: ${currentStudent?.oib}` : `Uloga: ${currentUser.role} | Gimnazijski sustav`}
           </p>
