@@ -550,9 +550,12 @@ export async function createApp() {
 
       return res.status(200).json({
         success: true,
-        message: "PIN je poslan SMS porukom. Vratite se na prijavu i unesite korisnicko ime, lozinku i PIN.",
+        message: sms.mocked
+          ? `PIN je generiran u testnom SMS nacinu. Testni PIN: ${pin}. Vratite se na prijavu i unesite korisnicko ime, lozinku i PIN.`
+          : "PIN je poslan SMS porukom. Vratite se na prijavu i unesite korisnicko ime, lozinku i PIN.",
         smsProvider: sms.provider,
-        mocked: Boolean(sms.mocked)
+        mocked: Boolean(sms.mocked),
+        debugPin: sms.mocked ? pin : undefined
       });
     } catch (error: any) {
       console.error("[ADMISSIONS_PIN] local request failed", error?.message || error);
