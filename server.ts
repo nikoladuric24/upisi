@@ -2,6 +2,18 @@ import express from "express";
 import path from "path";
 import crypto from "crypto";
 import fs from "fs";
+import {
+  createActivationToken,
+  formatPhone,
+  normalizeCountryCode,
+  normalizeEmail,
+  normalizePhoneNumber,
+  resolvePinForSending,
+  savePinForStudent,
+  sendSms,
+  verifyActivationToken,
+  verifyStudentPin
+} from "./api/shared/auth/pin-utils";
 
 // Define TypeScript interfaces for our server-side storage & sync
 interface EMaticaStudent {
@@ -44,6 +56,13 @@ function mapEdnevnikRolesToPortalRole(roles: string[], portalType: "FACULTY_ADMI
   if (normalized.some((role) => ['SUPER_ADMIN', 'MAIN_ADMIN'].includes(role))) {
     return 'SUPER_ADMIN';
   }
+
+  if (normalized.some((role) => ['PRIMARY_STUDENT', 'ELEMENTARY_STUDENT', 'BASIC_STUDENT'].includes(role))) return 'PRIMARY_STUDENT';
+  if (normalized.some((role) => ['SECONDARY_STUDENT', 'HIGH_SCHOOL_STUDENT'].includes(role))) return 'SECONDARY_STUDENT';
+  if (normalized.some((role) => ['PRIMARY_ADMIN', 'ELEMENTARY_ADMIN'].includes(role))) return 'PRIMARY_ADMIN';
+  if (normalized.some((role) => ['SECONDARY_ADMIN', 'HIGH_SCHOOL_ADMIN'].includes(role))) return 'SECONDARY_ADMIN';
+  if (normalized.some((role) => ['PRIMARY_HOMEROOM_TEACHER', 'ELEMENTARY_HOMEROOM_TEACHER'].includes(role))) return 'PRIMARY_HOMEROOM_TEACHER';
+  if (normalized.some((role) => ['SECONDARY_HOMEROOM_TEACHER', 'HIGH_SCHOOL_HOMEROOM_TEACHER'].includes(role))) return 'SECONDARY_HOMEROOM_TEACHER';
 
   if (portalType === 'FACULTY_ADMISSIONS' && normalized.some((role) => ['UNIVERSITY_ADMIN', 'FACULTY_ADMIN'].includes(role))) {
     return 'UNIVERSITY_ADMIN';
@@ -221,21 +240,31 @@ export async function createApp() {
       return res.status(400).json({ error: err.message });
     }
 
-    const normalizedEmail = String(email || '').trim().toLowerCase();
+    const normalizedEmail = normalizeEmail(String(email || ''));
     if (!normalizedEmail || !password) {
       return res.status(400).json({ error: "Unesite korisniÄŤko ime/e-mail i zaporku." });
-    }
-
-    if (!pin) {
-      return res.status(400).json({ error: "Unesite PIN." });
     }
 
     const ednevnikBaseUrl = (process.env.EDNEVNIK_AUTH_BASE_URL || process.env.EDNEVNIK_BASE_URL || '').replace(/\/$/, '');
 
     if (ednevnikBaseUrl) {
       try {
-        const looksLikeStaffLogin = /^\d{6}$/.test(String(password).trim()) && /^\d{4}$/.test(pin.trim());
-        const loginAttempts = looksLikeStaffLogin
+        const hasPin = /^\d{4}$/.test(pin.trim());
+        const looksLikeStaffLogin = /^\d{6}$/.test(String(password).trim()) && hasPin;
+        const loginAttempts = !pin
+          ? [
+              {
+                mode: 'STUDENT',
+                payload: {
+                  email: normalizedEmail,
+                  username: normalizedEmail,
+                  password,
+                  pin: password,
+                  loginType: 'STUDENT'
+                }
+              }
+            ]
+          : looksLikeStaffLogin
           ? [
               {
                 mode: 'STAFF',
@@ -354,6 +383,33 @@ export async function createApp() {
           });
         }
 
+        if (!pin) {
+          if (user.role !== 'PRIMARY_STUDENT' && user.role !== 'SECONDARY_STUDENT') {
+            return res.status(400).json({ error: "Djelatnici moraju unijeti interni PIN i kod iz autentifikatora." });
+          }
+
+          return res.status(200).json({
+            success: true,
+            requiresPinSetup: true,
+            activationToken: createActivationToken({
+              email: normalizedEmail,
+              portalType,
+              role: user.role,
+              source: 'ednevnik'
+            }),
+            message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+          });
+        }
+
+        if (user.role === 'PRIMARY_STUDENT' || user.role === 'SECONDARY_STUDENT') {
+          const pinOk = await verifyStudentPin(normalizedEmail, portalType, pin);
+          if (!pinOk) {
+            return res.status(401).json({
+              error: "PIN nije ispravan ili jos nije izdan. Ako je ovo prva prijava, ostavite PIN praznim."
+            });
+          }
+        }
+
         const sessionToken = crypto.randomBytes(32).toString('hex');
         const now = Date.now();
         const newSession: BackendSession = {
@@ -406,6 +462,33 @@ export async function createApp() {
       });
     }
 
+    if (!pin) {
+      if (user.role !== 'PRIMARY_STUDENT' && user.role !== 'SECONDARY_STUDENT') {
+        return res.status(400).json({ error: "Djelatnici moraju unijeti interni PIN i kod iz autentifikatora." });
+      }
+
+      return res.status(200).json({
+        success: true,
+        requiresPinSetup: true,
+        activationToken: createActivationToken({
+          email: normalizedEmail,
+          portalType,
+          role: user.role,
+          source: 'local'
+        }),
+        message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+      });
+    }
+
+    if (user.role === 'PRIMARY_STUDENT' || user.role === 'SECONDARY_STUDENT') {
+      const pinOk = await verifyStudentPin(normalizedEmail, portalType, pin);
+      if (!pinOk) {
+        return res.status(401).json({
+          error: "PIN nije ispravan ili jos nije izdan. Ako je ovo prva prijava, ostavite PIN praznim."
+        });
+      }
+    }
+
     const sessionToken = crypto.randomBytes(32).toString('hex');
     const now = Date.now();
     const newSession: BackendSession = {
@@ -428,6 +511,53 @@ export async function createApp() {
       portalType,
       message: `Uspješna prijava na portal.`
     });
+  });
+
+  // POST /api/shared/auth/request-pin
+  app.post("/api/shared/auth/request-pin", async (req, res) => {
+    const activation = verifyActivationToken(String(req.body?.activationToken || ""));
+    if (!activation?.email || !activation?.portalType) {
+      return res.status(401).json({
+        success: false,
+        error: "Aktivacijski zahtjev je istekao. Ponovno unesite korisnicko ime i lozinku."
+      });
+    }
+
+    const email = normalizeEmail(activation.email);
+    const portalType = activation.portalType as "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
+    const phoneCountry = normalizeCountryCode(req.body?.countryCode || req.body?.phoneCountry || "+385");
+    const phoneNumber = normalizePhoneNumber(req.body?.phoneNumber || "");
+
+    if (!phoneNumber || phoneNumber.length < 6) {
+      return res.status(400).json({ success: false, error: "Unesite ispravan broj mobitela." });
+    }
+
+    try {
+      const pin = await resolvePinForSending(email, portalType);
+      await savePinForStudent({
+        email,
+        portalType,
+        pin,
+        phoneCountry,
+        phoneNumber
+      });
+
+      const portalLabel = portalType === "FACULTY_ADMISSIONS" ? "Postani student" : "e-Srednje";
+      const sms = await sendSms({
+        to: formatPhone(phoneCountry, phoneNumber),
+        message: `${portalLabel}: vas PIN za prijavu je ${pin}. PIN je trajan i cuvajte ga za buduce prijave.`
+      });
+
+      return res.status(200).json({
+        success: true,
+        message: "PIN je poslan SMS porukom. Vratite se na prijavu i unesite korisnicko ime, lozinku i PIN.",
+        smsProvider: sms.provider,
+        mocked: Boolean(sms.mocked)
+      });
+    } catch (error: any) {
+      console.error("[ADMISSIONS_PIN] local request failed", error?.message || error);
+      return res.status(500).json({ success: false, error: error?.message || "Slanje PIN-a nije uspjelo." });
+    }
   });
 
   // GET /api/shared/auth/session

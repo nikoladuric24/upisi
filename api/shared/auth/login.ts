@@ -1,4 +1,5 @@
 import { createHmac } from "node:crypto";
+import { createActivationToken, normalizeEmail, verifyStudentPin } from "./pin-utils";
 
 type PortalType = "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
 
@@ -34,12 +35,6 @@ function setSessionCookie(res: any, token: string): void {
   );
 }
 
-function normalizeEmail(value: string): string {
-  const raw = String(value || "").trim().toLowerCase();
-  if (!raw) return "";
-  return raw.includes("@") ? raw : `${raw}@skolehr.xyz`;
-}
-
 function resolvePortalFromHost(hostname: string): PortalType {
   const cleanHost = hostname.toLowerCase().split(":")[0].replace(/\.$/, "");
   if (cleanHost === "postani-student.skolehr.xyz" || cleanHost === "fakulteti.skolehr.xyz") {
@@ -51,6 +46,12 @@ function resolvePortalFromHost(hostname: string): PortalType {
 function mapEdnevnikRolesToPortalRole(roles: string[], portalType: PortalType): string {
   const normalized = roles.map((role) => String(role || "").toUpperCase());
   if (normalized.some((role) => ["SUPER_ADMIN", "MAIN_ADMIN"].includes(role))) return "SUPER_ADMIN";
+  if (normalized.some((role) => ["PRIMARY_STUDENT", "ELEMENTARY_STUDENT", "BASIC_STUDENT"].includes(role))) return "PRIMARY_STUDENT";
+  if (normalized.some((role) => ["SECONDARY_STUDENT", "HIGH_SCHOOL_STUDENT"].includes(role))) return "SECONDARY_STUDENT";
+  if (normalized.some((role) => ["PRIMARY_ADMIN", "ELEMENTARY_ADMIN"].includes(role))) return "PRIMARY_ADMIN";
+  if (normalized.some((role) => ["SECONDARY_ADMIN", "HIGH_SCHOOL_ADMIN"].includes(role))) return "SECONDARY_ADMIN";
+  if (normalized.some((role) => ["PRIMARY_HOMEROOM_TEACHER", "ELEMENTARY_HOMEROOM_TEACHER"].includes(role))) return "PRIMARY_HOMEROOM_TEACHER";
+  if (normalized.some((role) => ["SECONDARY_HOMEROOM_TEACHER", "HIGH_SCHOOL_HOMEROOM_TEACHER"].includes(role))) return "SECONDARY_HOMEROOM_TEACHER";
   if (portalType === "FACULTY_ADMISSIONS" && normalized.some((role) => ["UNIVERSITY_ADMIN", "FACULTY_ADMIN"].includes(role))) return "UNIVERSITY_ADMIN";
   if (normalized.some((role) => ["ADMIN", "SCHOOL_ADMIN"].includes(role))) {
     return portalType === "FACULTY_ADMISSIONS" ? "SECONDARY_ADMIN" : "PRIMARY_ADMIN";
@@ -59,6 +60,22 @@ function mapEdnevnikRolesToPortalRole(roles: string[], portalType: PortalType): 
     return portalType === "FACULTY_ADMISSIONS" ? "SECONDARY_HOMEROOM_TEACHER" : "PRIMARY_HOMEROOM_TEACHER";
   }
   return portalType === "FACULTY_ADMISSIONS" ? "SECONDARY_STUDENT" : "PRIMARY_STUDENT";
+}
+
+function isStudentPortalRole(role: string): boolean {
+  return role === "PRIMARY_STUDENT" || role === "SECONDARY_STUDENT";
+}
+
+function isStaffPortalRole(role: string): boolean {
+  return !isStudentPortalRole(role);
+}
+
+function isRoleAllowedOnPortal(role: string, portalType: PortalType): boolean {
+  if (role === "SUPER_ADMIN") return true;
+  if (portalType === "SECONDARY_ADMISSIONS") {
+    return ["PRIMARY_STUDENT", "PRIMARY_HOMEROOM_TEACHER", "PRIMARY_ADMIN", "SECONDARY_ADMIN"].includes(role);
+  }
+  return ["SECONDARY_STUDENT", "SECONDARY_HOMEROOM_TEACHER", "SECONDARY_ADMIN", "UNIVERSITY_ADMIN"].includes(role);
 }
 
 export default async function handler(req: any, res: any) {
@@ -93,10 +110,6 @@ export default async function handler(req: any, res: any) {
     return res.status(400).json({ success: false, error: "Unesite korisnicko ime i lozinku." });
   }
 
-  if (!pin) {
-    return res.status(400).json({ success: false, error: "Unesite PIN." });
-  }
-
   if (!ednevnikBaseUrl) {
     return res.status(500).json({
       success: false,
@@ -105,8 +118,22 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const looksLikeStaffLogin = /^\d{6}$/.test(password.trim()) && /^\d{4}$/.test(pin.trim());
-    const loginAttempts = looksLikeStaffLogin
+    const hasPin = /^\d{4}$/.test(pin.trim());
+    const looksLikeStaffLogin = /^\d{6}$/.test(password.trim()) && hasPin;
+    const loginAttempts = !pin
+      ? [
+          {
+            mode: "STUDENT",
+            payload: {
+              email: normalizedEmail,
+              username: normalizedEmail,
+              password,
+              pin: password,
+              loginType: "STUDENT"
+            }
+          }
+        ]
+      : looksLikeStaffLogin
       ? [
           {
             mode: "STAFF",
@@ -234,6 +261,58 @@ export default async function handler(req: any, res: any) {
       ? result.roles
       : [ednevnikUser.role, ednevnikUser.access_role, result?.role].filter(Boolean);
     const role = mapEdnevnikRolesToPortalRole(roles, portalType);
+
+    if (!isRoleAllowedOnPortal(role, portalType)) {
+      return res.status(403).json({
+        success: false,
+        error: portalType === "FACULTY_ADMISSIONS"
+          ? "Nemate pravo pristupa sustavu Postani student s ovim korisnickim racunom."
+          : "Nemate pravo pristupa sustavu e-Srednje s ovim korisnickim racunom."
+      });
+    }
+
+    if (!pin) {
+      if (isStaffPortalRole(role)) {
+        return res.status(400).json({
+          success: false,
+          error: "Djelatnici moraju unijeti interni PIN i kod iz autentifikatora."
+        });
+      }
+
+      return res.status(200).json({
+        success: true,
+        requiresPinSetup: true,
+        activationToken: createActivationToken({
+          email: normalizedEmail,
+          portalType,
+          role,
+          source: "ednevnik"
+        }),
+        message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+      });
+    }
+
+    if (isStudentPortalRole(role)) {
+      const pinOk = await verifyStudentPin(normalizedEmail, portalType, pin);
+      console.log("[UPISI_LOGIN] admissions PIN check", {
+        normalizedEmail,
+        portalType,
+        pinOk
+      });
+
+      if (!pinOk) {
+        return res.status(401).json({
+          success: false,
+          error: "PIN nije ispravan ili jos nije izdan. Ako je ovo prva prijava, ostavite PIN praznim."
+        });
+      }
+    } else if (!hasPin) {
+      return res.status(400).json({
+        success: false,
+        error: "Djelatnici moraju unijeti 4-znamenkasti interni PIN."
+      });
+    }
+
     const fullName = ednevnikUser.fullName
       || ednevnikUser.full_name
       || [ednevnikUser.first_name, ednevnikUser.last_name].filter(Boolean).join(" ")

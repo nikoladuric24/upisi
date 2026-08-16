@@ -20,6 +20,10 @@
       "use": "@vercel/node"
     },
     {
+      "src": "api/shared/auth/request-pin.ts",
+      "use": "@vercel/node"
+    },
+    {
       "src": "api/shared/auth/session.ts",
       "use": "@vercel/node"
     },
@@ -46,6 +50,7 @@
   "routes": [
     { "src": "/api/health", "dest": "/api/health.ts" },
     { "src": "/api/shared/auth/login", "dest": "/api/shared/auth/login.ts" },
+    { "src": "/api/shared/auth/request-pin", "dest": "/api/shared/auth/request-pin.ts" },
     { "src": "/api/shared/auth/session", "dest": "/api/shared/auth/session.ts" },
     { "src": "/api/shared/auth/logout", "dest": "/api/shared/auth/logout.ts" },
     { "src": "/api/shared/auth/keep-alive", "dest": "/api/shared/auth/keep-alive.ts" },
