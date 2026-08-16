@@ -75,8 +75,8 @@ export default async function handler(req: any, res: any) {
   const portalType = resolvePortalFromHost(host);
   const normalizedEmail = normalizeEmail(req.body?.email || req.body?.username);
   const password = String(req.body?.password || "");
-  const totpCode = req.body?.totpCode || req.body?.authenticatorCode || req.body?.code;
-  const loginType = req.body?.loginType || "STAFF";
+  const pin = String(req.body?.pin || "");
+  const explicitTotpCode = req.body?.totpCode || req.body?.authenticatorCode || req.body?.code;
   const ednevnikBaseUrl = (process.env.EDNEVNIK_AUTH_BASE_URL || process.env.EDNEVNIK_BASE_URL || "").replace(/\/$/, "");
 
   console.log("[UPISI_LOGIN] request", {
@@ -84,12 +84,17 @@ export default async function handler(req: any, res: any) {
     portalType,
     normalizedEmail,
     hasPassword: Boolean(password),
-    hasTotpCode: Boolean(totpCode),
+    hasPin: Boolean(pin),
+    hasExplicitTotpCode: Boolean(explicitTotpCode),
     hasEdnevnikBaseUrl: Boolean(ednevnikBaseUrl)
   });
 
   if (!normalizedEmail || !password) {
     return res.status(400).json({ success: false, error: "Unesite korisnicko ime i lozinku." });
+  }
+
+  if (!pin) {
+    return res.status(400).json({ success: false, error: "Unesite PIN." });
   }
 
   if (!ednevnikBaseUrl) {
@@ -100,36 +105,115 @@ export default async function handler(req: any, res: any) {
   }
 
   try {
-    const upstreamResponse = await fetch(`${ednevnikBaseUrl}/api/auth/login`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        email: normalizedEmail,
-        username: normalizedEmail,
-        password,
-        pin: password,
-        loginType,
-        totpCode
-      })
-    });
+    const looksLikeStaffLogin = /^\d{6}$/.test(password.trim()) && /^\d{4}$/.test(pin.trim());
+    const loginAttempts = looksLikeStaffLogin
+      ? [
+          {
+            mode: "STAFF",
+            payload: {
+              email: normalizedEmail,
+              username: normalizedEmail,
+              password: pin,
+              pin,
+              loginType: "STAFF",
+              totpCode: explicitTotpCode || password
+            }
+          },
+          {
+            mode: "STUDENT",
+            payload: {
+              email: normalizedEmail,
+              username: normalizedEmail,
+              password,
+              pin: password,
+              loginType: "STUDENT",
+              admissionsPin: pin
+            }
+          }
+        ]
+      : [
+          {
+            mode: "STUDENT",
+            payload: {
+              email: normalizedEmail,
+              username: normalizedEmail,
+              password,
+              pin: password,
+              loginType: "STUDENT",
+              admissionsPin: pin
+            }
+          },
+          {
+            mode: "STAFF",
+            payload: {
+              email: normalizedEmail,
+              username: normalizedEmail,
+              password: pin,
+              pin,
+              loginType: "STAFF",
+              totpCode: explicitTotpCode || password
+            }
+          }
+        ];
 
-    const raw = await upstreamResponse.text();
+    let upstreamResponse: Response | null = null;
     let result: any = null;
-    if (raw) {
-      try {
-        result = JSON.parse(raw);
-      } catch {
-        result = { raw };
+    let selectedMode = loginAttempts[0].mode;
+
+    for (const attempt of loginAttempts) {
+      upstreamResponse = await fetch(`${ednevnikBaseUrl}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(attempt.payload)
+      });
+
+      const raw = await upstreamResponse.text();
+      result = null;
+      if (raw) {
+        try {
+          result = JSON.parse(raw);
+        } catch {
+          result = { raw };
+        }
+      }
+
+      console.log("[UPISI_LOGIN] ednevnik result", {
+        mode: attempt.mode,
+        status: upstreamResponse.status,
+        ok: upstreamResponse.ok,
+        hasUser: Boolean(result?.user),
+        hasProfile: Boolean(result?.profile),
+        roles: result?.roles
+      });
+
+      selectedMode = attempt.mode;
+      if (upstreamResponse.ok && result?.success !== false) {
+        break;
       }
     }
 
-    console.log("[UPISI_LOGIN] ednevnik result", {
-      status: upstreamResponse.status,
-      ok: upstreamResponse.ok,
-      hasUser: Boolean(result?.user),
-      hasProfile: Boolean(result?.profile),
-      roles: result?.roles
-    });
+    if (!upstreamResponse) {
+      return res.status(502).json({ success: false, error: "e-Dnevnik prijava nije pokrenuta." });
+    }
+
+    /*
+      Login mapping:
+      - Student: KORISNICKO IME + LOZINKA = e-Dnevnik credentials, PIN = e-Upisi SMS PIN.
+      - Staff:   KORISNICKO IME + PIN = e-Dnevnik internal PIN, LOZINKA = authenticator code.
+    */
+    const lastPayloadShape = {
+      email: normalizedEmail,
+      mode: selectedMode,
+      hasPassword: true,
+      hasPin: true
+    };
+    console.log("[UPISI_LOGIN] selected mapping", lastPayloadShape);
+
+    /*
+      The e-Dnevnik API validates the e-Dnevnik credentials. The admissions PIN is
+      passed as admissionsPin so the central system can validate it when that
+      endpoint supports the field.
+    */
 
     if (!upstreamResponse.ok || result?.success === false) {
       return res.status(upstreamResponse.status || 502).json({

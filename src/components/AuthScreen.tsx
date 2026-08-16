@@ -6,7 +6,7 @@
 import React, { useState } from 'react';
 import { User } from '../types';
 import { INITIAL_USERS } from '../data/mockData';
-import { Shield, BookOpen, GraduationCap, School, Key, ArrowRight, Smartphone } from 'lucide-react';
+import { Shield, BookOpen, GraduationCap, School, Key, ArrowRight, Hash } from 'lucide-react';
 import { usePortal } from './PortalContext';
 
 interface AuthScreenProps {
@@ -16,7 +16,7 @@ interface AuthScreenProps {
 export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [authenticatorCode, setAuthenticatorCode] = useState('');
+  const [pin, setPin] = useState('');
   const [error, setError] = useState('');
   const [showTestAccounts, setShowTestAccounts] = useState(true);
   const [loading, setLoading] = useState(false);
@@ -31,7 +31,12 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
     }
 
     if (!password) {
-      setError('Molimo unesite zaporku.');
+      setError('Molimo unesite lozinku.');
+      return;
+    }
+
+    if (!pin) {
+      setError('Molimo unesite PIN.');
       return;
     }
 
@@ -47,7 +52,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         body: JSON.stringify({
           email,
           password,
-          totpCode: authenticatorCode.trim() || undefined,
+          pin,
         }),
       });
 
@@ -68,6 +73,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
   const handleTestLogin = async (user: User) => {
     setEmail(user.email);
+    setPin('1234');
     setPassword('••••••••');
     setError('');
     setLoading(true);
@@ -78,7 +84,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email: user.email }),
+        body: JSON.stringify({ email: user.email, password: '1234', pin: '1234' }),
       });
 
       if (!response.ok) {
@@ -237,7 +243,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                     type="email"
                     value={email}
                     onChange={e => setEmail(e.target.value)}
-                    placeholder="ime.prezime@skole.hr"
+                    placeholder="ime.prezime@skolehr.xyz"
                     disabled={loading}
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
@@ -246,7 +252,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
-                  Zaporka
+                  Lozinka
                 </label>
                 <div className="relative">
                   <span className="absolute left-3.5 top-3.5 text-slate-400">
@@ -261,30 +267,32 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
                 </div>
+                <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  Ucenici unose e-Dnevnik lozinku. Nastavnici i administratori unose kod iz autentifikatora.
+                </p>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 dark:text-slate-400 mb-1.5 uppercase tracking-wider">
-                  Autentifikator kod <span className="normal-case tracking-normal text-slate-400">(za zaposlenike)</span>
+                  PIN
                 </label>
                 <div className="relative">
                   <span className="absolute left-3.5 top-3.5 text-slate-400">
-                    <Smartphone className="h-5 w-5" />
+                    <Hash className="h-5 w-5" />
                   </span>
                   <input
-                    type="text"
+                    type="password"
                     inputMode="numeric"
-                    pattern="[0-9]*"
-                    maxLength={6}
-                    value={authenticatorCode}
-                    onChange={e => setAuthenticatorCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    placeholder="6-znamenkasti kod"
+                    maxLength={4}
+                    value={pin}
+                    onChange={e => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                    placeholder="4-znamenkasti PIN"
                     disabled={loading}
                     className="w-full pl-11 pr-4 py-3 bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded-2xl text-slate-800 dark:text-slate-100 focus:outline-hidden focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
                   />
                 </div>
                 <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
-                  Učenici ovo polje ostavljaju prazno. Nastavnici i administratori unose kod iz autentifikatora.
+                  Učenici unose PIN iz SMS-a. Nastavnici i administratori unose interni PIN.
                 </p>
               </div>
 

@@ -209,7 +209,9 @@ export async function createApp() {
 
   // POST /api/shared/auth/login
   app.post("/api/shared/auth/login", async (req, res) => {
-    const { email, password, totpCode, loginType } = req.body;
+    const { email, password } = req.body;
+    const pin = String(req.body?.pin || '');
+    const explicitTotpCode = req.body?.totpCode || req.body?.authenticatorCode || req.body?.code;
     
     let portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
     const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers.host || '';
@@ -224,32 +226,103 @@ export async function createApp() {
       return res.status(400).json({ error: "Unesite korisniÄŤko ime/e-mail i zaporku." });
     }
 
+    if (!pin) {
+      return res.status(400).json({ error: "Unesite PIN." });
+    }
+
     const ednevnikBaseUrl = (process.env.EDNEVNIK_AUTH_BASE_URL || process.env.EDNEVNIK_BASE_URL || '').replace(/\/$/, '');
 
     if (ednevnikBaseUrl) {
       try {
-        const response = await fetch(`${ednevnikBaseUrl}/api/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            email: normalizedEmail,
-            password,
-            totpCode,
-            loginType
-          })
-        });
+        const looksLikeStaffLogin = /^\d{6}$/.test(String(password).trim()) && /^\d{4}$/.test(pin.trim());
+        const loginAttempts = looksLikeStaffLogin
+          ? [
+              {
+                mode: 'STAFF',
+                payload: {
+                  email: normalizedEmail,
+                  username: normalizedEmail,
+                  password: pin,
+                  pin,
+                  loginType: 'STAFF',
+                  totpCode: explicitTotpCode || password
+                }
+              },
+              {
+                mode: 'STUDENT',
+                payload: {
+                  email: normalizedEmail,
+                  username: normalizedEmail,
+                  password,
+                  pin: password,
+                  loginType: 'STUDENT',
+                  admissionsPin: pin
+                }
+              }
+            ]
+          : [
+              {
+                mode: 'STUDENT',
+                payload: {
+                  email: normalizedEmail,
+                  username: normalizedEmail,
+                  password,
+                  pin: password,
+                  loginType: 'STUDENT',
+                  admissionsPin: pin
+                }
+              },
+              {
+                mode: 'STAFF',
+                payload: {
+                  email: normalizedEmail,
+                  username: normalizedEmail,
+                  password: pin,
+                  pin,
+                  loginType: 'STAFF',
+                  totpCode: explicitTotpCode || password
+                }
+              }
+            ];
 
-        const raw = await response.text();
+        let response: Response | null = null;
         let authResult: any = null;
-        if (raw) {
-          try {
-            authResult = JSON.parse(raw);
-          } catch {
-            console.error("[UPISI_AUTH] e-Dnevnik returned non-JSON response:", raw.slice(0, 500));
+
+        for (const attempt of loginAttempts) {
+          response = await fetch(`${ednevnikBaseUrl}/api/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(attempt.payload)
+          });
+
+          const raw = await response.text();
+          authResult = null;
+          if (raw) {
+            try {
+              authResult = JSON.parse(raw);
+            } catch {
+              console.error("[UPISI_AUTH] e-Dnevnik returned non-JSON response:", raw.slice(0, 500));
+            }
+          }
+
+          console.log("[UPISI_AUTH] e-Dnevnik attempt", {
+            mode: attempt.mode,
+            status: response.status,
+            ok: response.ok,
+            hasUser: Boolean(authResult?.user),
+            roles: authResult?.roles
+          });
+
+          if (response.ok && authResult?.success !== false) {
+            break;
           }
         }
 
-        if (!response.ok) {
+        if (!response) {
+          return res.status(502).json({ error: "e-Dnevnik prijava nije pokrenuta." });
+        }
+
+        if (!response.ok || authResult?.success === false) {
           return res.status(response.status).json({
             error: authResult?.error || "Neispravni podaci za prijavu."
           });
