@@ -397,7 +397,7 @@ export async function createApp() {
               role: user.role,
               source: 'ednevnik'
             }),
-            message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+            message: "Ovo je prva prijava. Unesite broj telefona za slanje 4-znamenkastog PIN-a."
           });
         }
 
@@ -476,7 +476,7 @@ export async function createApp() {
           role: user.role,
           source: 'local'
         }),
-        message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+        message: "Ovo je prva prijava. Unesite broj telefona za slanje 4-znamenkastog PIN-a."
       });
     }
 
@@ -529,7 +529,7 @@ export async function createApp() {
     const phoneNumber = normalizePhoneNumber(req.body?.phoneNumber || "");
 
     if (!phoneNumber || phoneNumber.length < 6) {
-      return res.status(400).json({ success: false, error: "Unesite ispravan broj mobitela." });
+      return res.status(400).json({ success: false, error: "Unesite ispravan broj telefona." });
     }
 
     try {

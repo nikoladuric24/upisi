@@ -359,7 +359,7 @@ export default async function handler(req: any, res: any) {
           role,
           source: "ednevnik"
         }),
-        message: "Ovo je prva prijava. Unesite broj mobitela za slanje 4-znamenkastog PIN-a."
+        message: "Ovo je prva prijava. Unesite broj telefona za slanje 4-znamenkastog PIN-a."
       });
     }
 
