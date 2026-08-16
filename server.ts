@@ -39,7 +39,7 @@ interface EMaticaSubject {
   foreignLanguageOrder?: 'FIRST' | 'SECOND' | null;
 }
 
-async function startServer() {
+export async function createApp() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
   const INTEGRATION_CLIENT_ID = process.env.EMATICA_SERVICE_CLIENT_ID || 'eduportal_mzo_client';
@@ -2843,6 +2843,10 @@ async function startServer() {
     res.json(history);
   });
 
+  if (process.env.VERCEL) {
+    return app;
+  }
+
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -2858,9 +2862,17 @@ async function startServer() {
     });
   }
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  return app;
+}
+
+async function startServer() {
+  const app = await createApp();
+  const port = Number(process.env.PORT || 3000);
+  app.listen(port, "0.0.0.0", () => {
+    console.log(`Server running on http://localhost:${port}`);
   });
 }
 
-startServer();
+if (!process.env.VERCEL) {
+  startServer();
+}
