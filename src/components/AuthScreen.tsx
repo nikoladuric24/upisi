@@ -29,6 +29,11 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
       return;
     }
 
+    if (!password) {
+      setError('Molimo unesite zaporku.');
+      return;
+    }
+
     setLoading(true);
     setError('');
 
@@ -38,7 +43,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify({ email, password }),
       });
 
       if (!response.ok) {

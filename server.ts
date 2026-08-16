@@ -39,6 +39,28 @@ interface EMaticaSubject {
   foreignLanguageOrder?: 'FIRST' | 'SECOND' | null;
 }
 
+function mapEdnevnikRolesToPortalRole(roles: string[], portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS"): string {
+  const normalized = roles.map((role) => String(role || '').toUpperCase());
+
+  if (normalized.some((role) => ['SUPER_ADMIN', 'MAIN_ADMIN'].includes(role))) {
+    return 'SUPER_ADMIN';
+  }
+
+  if (portalType === 'FACULTY_ADMISSIONS' && normalized.some((role) => ['UNIVERSITY_ADMIN', 'FACULTY_ADMIN'].includes(role))) {
+    return 'UNIVERSITY_ADMIN';
+  }
+
+  if (normalized.some((role) => ['ADMIN', 'SCHOOL_ADMIN'].includes(role))) {
+    return portalType === 'FACULTY_ADMISSIONS' ? 'SECONDARY_ADMIN' : 'PRIMARY_ADMIN';
+  }
+
+  if (normalized.some((role) => ['HOMEROOM', 'HOMEROOM_TEACHER', 'DEPUTY', 'TEACHER', 'STAFF'].includes(role))) {
+    return portalType === 'FACULTY_ADMISSIONS' ? 'SECONDARY_HOMEROOM_TEACHER' : 'PRIMARY_HOMEROOM_TEACHER';
+  }
+
+  return portalType === 'FACULTY_ADMISSIONS' ? 'SECONDARY_STUDENT' : 'PRIMARY_STUDENT';
+}
+
 export async function createApp() {
   const app = express();
   const PORT = Number(process.env.PORT || 3000);
@@ -187,8 +209,8 @@ export async function createApp() {
   // ==========================================
 
   // POST /api/shared/auth/login
-  app.post("/api/shared/auth/login", (req, res) => {
-    const { email } = req.body;
+  app.post("/api/shared/auth/login", async (req, res) => {
+    const { email, password, totpCode, loginType } = req.body;
     
     let portalType: "FACULTY_ADMISSIONS" | "SECONDARY_ADMISSIONS";
     const hostHeader = (req.headers['x-forwarded-host'] as string) || req.headers.host || '';
@@ -198,7 +220,101 @@ export async function createApp() {
       return res.status(400).json({ error: err.message });
     }
 
-    const user = BACKEND_USERS.find(u => u.email.toLowerCase().trim() === email?.toLowerCase().trim());
+    const normalizedEmail = String(email || '').trim().toLowerCase();
+    if (!normalizedEmail || !password) {
+      return res.status(400).json({ error: "Unesite korisniÄŤko ime/e-mail i zaporku." });
+    }
+
+    const ednevnikBaseUrl = (process.env.EDNEVNIK_AUTH_BASE_URL || process.env.EDNEVNIK_BASE_URL || '').replace(/\/$/, '');
+
+    if (ednevnikBaseUrl) {
+      try {
+        const response = await fetch(`${ednevnikBaseUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: normalizedEmail,
+            password,
+            totpCode,
+            loginType
+          })
+        });
+
+        const raw = await response.text();
+        let authResult: any = null;
+        if (raw) {
+          try {
+            authResult = JSON.parse(raw);
+          } catch {
+            console.error("[UPISI_AUTH] e-Dnevnik returned non-JSON response:", raw.slice(0, 500));
+          }
+        }
+
+        if (!response.ok) {
+          return res.status(response.status).json({
+            error: authResult?.error || "Neispravni podaci za prijavu."
+          });
+        }
+
+        const profile = authResult?.user;
+        const roles = authResult?.roles || [];
+        const role = mapEdnevnikRolesToPortalRole(roles, portalType);
+        const user = {
+          id: profile?.id || authResult?.session?.user?.id || normalizedEmail,
+          email: profile?.email || normalizedEmail,
+          fullName: profile?.name || profile?.full_name || profile?.email || normalizedEmail,
+          role,
+          createdAt: new Date().toISOString()
+        };
+
+        let isRoleAllowed = false;
+        if (portalType === 'FACULTY_ADMISSIONS') {
+          const allowedRoles = ['SECONDARY_STUDENT', 'SECONDARY_HOMEROOM_TEACHER', 'SECONDARY_ADMIN', 'UNIVERSITY_ADMIN', 'SUPER_ADMIN'];
+          isRoleAllowed = allowedRoles.includes(user.role);
+        } else {
+          const allowedRoles = ['PRIMARY_STUDENT', 'PRIMARY_HOMEROOM_TEACHER', 'PRIMARY_ADMIN', 'SECONDARY_ADMIN', 'SUPER_ADMIN'];
+          isRoleAllowed = allowedRoles.includes(user.role);
+        }
+
+        if (!isRoleAllowed) {
+          return res.status(403).json({
+            error: `Pristup odbijen: Korisnik nema pravo pristupa portalu ${portalType === 'FACULTY_ADMISSIONS' ? 'Postani student' : 'e-Srednja'}.`
+          });
+        }
+
+        const sessionToken = crypto.randomBytes(32).toString('hex');
+        const now = Date.now();
+        const newSession: BackendSession = {
+          id: "sess-" + crypto.randomBytes(8).toString('hex'),
+          userId: user.id,
+          portalType,
+          host: hostHeader,
+          createdAt: new Date().toISOString(),
+          lastActivityAt: new Date().toISOString(),
+          expiresAt: new Date(now + 45 * 60 * 1000).toISOString()
+        };
+
+        backendSessions.set(sessionToken, newSession);
+
+        res.setHeader('Set-Cookie', `session_token=${sessionToken}; Path=/; HttpOnly; SameSite=Lax${process.env.NODE_ENV === 'production' ? '; Secure' : ''}`);
+
+        return res.status(200).json({
+          success: true,
+          user,
+          roles,
+          portalType,
+          source: 'ednevnik',
+          message: `UspjeĹˇna prijava na portal.`
+        });
+      } catch (error: any) {
+        console.error("[UPISI_AUTH] e-Dnevnik login proxy failed:", error?.message || error);
+        return res.status(502).json({
+          error: "Povezivanje s e-Dnevnik prijavom nije uspjelo. Provjerite EDNEVNIK_AUTH_BASE_URL u Vercelu."
+        });
+      }
+    }
+
+    const user = BACKEND_USERS.find(u => u.email.toLowerCase().trim() === normalizedEmail);
     if (!user) {
       return res.status(400).json({ error: "Korisnik s ovim e-mailom nije pronađen u EduPortal bazi." });
     }
