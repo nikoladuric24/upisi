@@ -57,7 +57,11 @@ export function normalizeEmail(value: string): string {
   const withDomain = raw.includes("@") ? raw : `${raw}@skolehr.xyz`;
   return withDomain
     .replace(/@eskole\.hr$/i, "@skolehr.xyz")
-    .replace(/@eskole\.me$/i, "@skolehr.xyz");
+    .replace(/@eskole\.me$/i, "@skolehr.xyz")
+    .replace(/@eskolehr\.hr$/i, "@skolehr.xyz")
+    .replace(/@eskolehr\.me$/i, "@skolehr.xyz")
+    .replace(/@eskolehr\.xyz$/i, "@skolehr.xyz")
+    .replace(/@eskolehr\.$/i, "@skolehr.xyz");
 }
 
 export function normalizeCountryCode(value: string): string {

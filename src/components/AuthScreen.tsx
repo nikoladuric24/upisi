@@ -34,7 +34,11 @@ function normalizeEmailInput(value: string): string {
   const withDomain = raw.includes('@') ? raw : `${raw}@skolehr.xyz`;
   return withDomain
     .replace(/@eskole\.hr$/i, '@skolehr.xyz')
-    .replace(/@eskole\.me$/i, '@skolehr.xyz');
+    .replace(/@eskole\.me$/i, '@skolehr.xyz')
+    .replace(/@eskolehr\.hr$/i, '@skolehr.xyz')
+    .replace(/@eskolehr\.me$/i, '@skolehr.xyz')
+    .replace(/@eskolehr\.xyz$/i, '@skolehr.xyz')
+    .replace(/@eskolehr\.$/i, '@skolehr.xyz');
 }
 
 export function AuthScreen({ onLogin }: AuthScreenProps) {
@@ -50,7 +54,7 @@ export function AuthScreen({ onLogin }: AuthScreenProps) {
   const [showResendHelp, setShowResendHelp] = useState(false);
 
   const { config, portalType, setPortalTypeOverride, isDevMode } = usePortal();
-  const smsNumber = (import.meta as any).env?.VITE_ADMISSIONS_SMS_NUMBER || '(broj telefona s kojeg ce biti poslan PIN nije postavljen)';
+  const smsNumber = (import.meta as any).env?.VITE_ADMISSIONS_SMS_NUMBER || '016684568';
 
   const readApiResponse = async (response: Response) => {
     const raw = await response.text();
